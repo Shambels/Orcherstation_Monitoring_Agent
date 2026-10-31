@@ -166,6 +166,20 @@ def test_cascade_bornee():
     assert not prot.reussie and prot.erreur is None
 
 
+def test_reessais_avant_message_erreur():
+    # Ordre des middlewares : placé avant ToolRetryMiddleware, ToolErrorMiddleware répondait dès le 1er échec
+    rt.panne_supervision()
+    try:
+        modele = FauxModeleOutils(outil="ping_serveur", args={"hote": "srv-erp-02"})
+        essai = asyncio.run(rt.lancer(rt.agent_reseau_protege(modele), "?", rt.cascade()))
+        executions = rt.RESEAU.appels
+    finally:
+        rt.RESEAU.configurer()
+    assert executions == 3                                    # 1 essai + max_retries=2
+    assert essai.outils == ["ping_serveur"]                   # un seul ToolMessage pour le modèle
+    assert "échec de l'outil ping_serveur" in essai.reponse   # formulé par erreur_reseau
+
+
 # --------------------------------------------------------------------------- conformité et jalon
 def test_marquage_art50():
     m = marquer(AIMessage("ok"), version="v", modele="m")

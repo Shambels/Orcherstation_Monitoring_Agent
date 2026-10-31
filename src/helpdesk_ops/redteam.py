@@ -333,8 +333,16 @@ def agent_reseau_vulnerable(llm: BaseChatModel) -> object:
 
 
 def agent_reseau_protege(llm: BaseChatModel) -> object:
-    """Nouvelles tentatives bornées dans le code, puis plafonds d'appels : l'agent s'arrête et le dit."""
+    """Nouvelles tentatives bornées dans le code, puis plafonds d'appels : l'agent s'arrête et le dit.
+
+    Ordre des middlewares : le premier de la liste enveloppe les suivants. ToolErrorMiddleware doit donc venir AVANT
+    ToolRetryMiddleware : placé après, il changeait la ConnectionError en message avant que les nouvelles tentatives
+    ne la voient (l'outil ne s'exécutait qu'une fois, constaté le 31/10/2026). on_failure="error" : après la dernière
+    tentative, l'exception remonte jusqu'à erreur_reseau, qui la formule pour le modèle.
+    """
     return create_agent(llm, [ping_serveur], system_prompt=CONSIGNE_DIAGNOSTIC + " Si la supervision est injoignable, "
                         "dis-le et propose d'ouvrir un ticket.", name="reseau_protege",
-                        middleware=[ToolRetryMiddleware(max_retries=2, initial_delay=0.1, jitter=False),
-                                    ToolErrorMiddleware(erreur_reseau), *sec.middlewares_limites(appels_modele=4, appels_outils=3)])
+                        middleware=[ToolErrorMiddleware(erreur_reseau),
+                                    ToolRetryMiddleware(max_retries=2, retry_on=(ConnectionError, TimeoutError),
+                                                        on_failure="error", initial_delay=0.1, jitter=False),
+                                    *sec.middlewares_limites(appels_modele=4, appels_outils=3)])
