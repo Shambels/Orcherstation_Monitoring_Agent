@@ -15,5 +15,7 @@ Prepa/
 notebooks/_sources/
 # Decks : non distribués par Git (décision du 26/10)
 supports/
+# Chapitre 0 : la stack écrite par l'apprenant (J0-01), avec son .env et ses secrets
+lab0/
 # Traces locales du red-team (prompts d'attaque rejoués sur le poste)
 data/redteam/audit_redteam.jsonl

@@ -2,6 +2,10 @@
 
 Formation BStorm : LangGraph + Langfuse, stack 100 % locale (vLLM sur le GPU de la salle, Qdrant, Langfuse auto-hébergé ; Ollama en repli sur un poste sans GPU).
 
+## Chapitre 0 (hors des 4 jours) : comprendre la stack
+
+Le pack `infrastructure/` installe tout en une commande. Pour comprendre ce qu'il assemble, le notebook `notebooks/J0_01_installer_et_brancher.ipynb` fait reconstruire la stack service par service (Qdrant, Langfuse et ses cinq dépendances, vLLM ou Ollama) dans un dossier `lab0/`, à côté du pack et sans le toucher, puis brancher Python sur chaque service. À faire avant la formation ou à garder en annexe.
+
 ## Installation en salle (Ubuntu 24.04, GPU NVIDIA)
 
 ```bash
@@ -35,7 +39,7 @@ Le J4, à la demande du formateur : `bash infrastructure/vllm_mode.sh juge` (le 
 
 | Dossier | Contenu |
 | --- | --- |
-| `notebooks/` | un notebook par séquence (`J1_01` … ) |
+| `notebooks/` | un notebook par séquence (`J0_01` pour le chapitre 0, puis `J1_01` …) |
 | `exercices/enonces/` | exercices de la semaine |
 | `src/helpdesk_ops/` | code partagé par les notebooks |
 | `infrastructure/` | Docker Compose, `.env` généré, scripts d'installation et `smoke_test.py` |
