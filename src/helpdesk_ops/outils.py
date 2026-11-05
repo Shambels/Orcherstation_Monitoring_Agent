@@ -6,7 +6,7 @@ d'erreur exploitable par le modèle plutôt qu'un None.
 from langchain_core.tools import tool
 
 from helpdesk_ops.donnees import INVENTAIRE, KB, TICKETS_OUVERTS
-from helpdesk_ops.texte import normaliser
+from helpdesk_ops.texte import mots_cles, normaliser
 
 
 @tool(parse_docstring=True)
@@ -32,8 +32,8 @@ def tickets_ouverts(file: str) -> str:
 
 
 def rechercher_kb(question: str, k: int = 2) -> list[dict]:
-    """Recherche par mots communs (> 3 lettres), sans accents. Le vrai RAG sur Qdrant arrive en J3."""
-    mots = {m for m in normaliser(question).replace("-", " ").split() if len(m) > 3}
+    """Recherche par mots communs (voir mots_cles), sans accents. Le vrai RAG sur Qdrant arrive en J3."""
+    mots = mots_cles(question)
     scores = []
     for article in KB:
         texte = normaliser(article["titre"] + " " + article["contenu"]).replace("-", " ")

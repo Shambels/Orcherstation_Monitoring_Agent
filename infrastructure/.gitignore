@@ -1,5 +1,6 @@
 .env
 .venv/
+.venv-windows/
 __pycache__/
 *.sqlite
 *.db

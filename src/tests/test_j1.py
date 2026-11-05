@@ -12,6 +12,8 @@ def test_outils_erreurs_explicites():
     assert "n'est pas dans l'inventaire" in statut_serveur.invoke({"nom": "srv-paie-09"})
     assert "Files valides" in tickets_ouverts.invoke({"file": "infra"})
     assert chercher_kb.invoke({"question": "configurer le VPN"}).startswith("[KB-001]")
+    # « vpn » n'a que 3 lettres : avec le seul « marche », la recherche ne trouvait rien
+    assert chercher_kb.invoke({"question": "Mon VPN ne marche plus"}).startswith("[KB-001]")
     assert chercher_kb.invoke({"question": "tarte au sucre"}).startswith("Aucun article")
 
 
