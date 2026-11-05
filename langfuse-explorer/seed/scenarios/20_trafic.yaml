@@ -1,0 +1,47 @@
+# =============================================================================
+# Trafic de fond : le « quotidien » du helpdesk sur 7 jours, généré de façon déterministe
+# (graine fixe) à partir du jeu d'évaluation du cours (data/helpdesk_eval.json).
+#
+# Le scénario caché à découvrir (mission Expert) :
+#   la release v1.4.0 (J-2) embarque par erreur le prompt superviseur v2, plus court,
+#   sans définitions ni condition d'arrêt : le routage se dégrade et la pertinence chute.
+#   La release v1.4.1 (J-1) revient à un prompt corrigé (v3).
+# =============================================================================
+graine: 2026
+
+# Une entrée par jour, du plus ancien (jour 6) au plus récent (jour 0 = aujourd'hui)
+jours:
+  - {jour: 6, traces: 14, release: v1.3.0, prompt_superviseur: 1, taux_erreur_routage: 0.10}
+  - {jour: 5, traces: 16, release: v1.3.0, prompt_superviseur: 1, taux_erreur_routage: 0.10}
+  - {jour: 4, traces: 15, release: v1.3.0, prompt_superviseur: 1, taux_erreur_routage: 0.10}
+  - {jour: 3, traces: 13, release: v1.3.0, prompt_superviseur: 1, taux_erreur_routage: 0.10}
+  - {jour: 2, traces: 18, release: v1.4.0, prompt_superviseur: 2, taux_erreur_routage: 0.45}
+  - {jour: 1, traces: 17, release: v1.4.1, prompt_superviseur: 3, taux_erreur_routage: 0.05}
+  - {jour: 0, traces: 12, release: v1.4.1, prompt_superviseur: 3, taux_erreur_routage: 0.05}
+
+# Cas du jeu d'évaluation repris comme demandes « réelles » (les refus et l'incident ERP C03 sont dans les signatures)
+cas: [C01, C02, C04, C05, C06, C07, C08, C09, C10, C11, C12, C13, C14, C15, C16, C17, C18]
+
+# Utilisateurs pseudonymisés (jamais de nom ni d'e-mail dans user_id)
+utilisateurs: [collab-8b20d4, collab-71e0aa, collab-3f9c12, collab-a41d07, collab-5e6b88,
+               collab-c02f19, collab-9d7a3e, collab-e8b145, collab-14be90, collab-d3c7a2]
+
+# Erreurs de routage typiques observées pendant la formation (spécialiste attendu -> choisi)
+confusions:
+  kb: diagnostic
+  diagnostic: kb
+  acces: kb
+  ticketing: kb
+
+part_feedback: 0.3          # proportion des traces avec un pouce levé / baissé
+part_ton: 0.15              # proportion avec une note de ton (revue humaine)
+
+# Environnement « formation » : essais des apprenants (poste sans GPU, modèle 3b)
+formation:
+  traces: 10
+  jour: 0
+  release: dev
+  backend: ollama-cpu
+  modele_agent: granite4.1:3b
+  utilisateurs: [apprenant-01, apprenant-02, apprenant-03, apprenant-04, apprenant-05]
+  tags: [lab]

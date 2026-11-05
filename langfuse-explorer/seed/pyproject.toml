@@ -1,0 +1,24 @@
+# Environnement Python du kit Langfuse Explorer (géré par uv, isolé du cours).
+# Versions alignées sur le cours : SDK Langfuse 4.15.6, OpenTelemetry 1.45.0.
+#   uv run --project seed seed/seed_langfuse.py
+#   uv run --project seed tools/verify.py
+#   uv run --project seed --group captures tools/capture_screens.py
+[project]
+name = "langfuse-explorer"
+version = "1.0.0"
+description = "Kit d'exploration de l'UI Langfuse v4 : seed déterministe, guide et missions"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "langfuse==4.15.6",
+    "opentelemetry-sdk==1.45.0",
+    "opentelemetry-exporter-otlp-proto-http==1.45.0",
+    "pyyaml>=6.0.2,<7",
+    "httpx>=0.28.1,<1",
+]
+
+[dependency-groups]
+# Uniquement pour régénérer les captures du guide (formateur)
+captures = ["playwright>=1.56,<2"]
+
+[tool.uv]
+package = false

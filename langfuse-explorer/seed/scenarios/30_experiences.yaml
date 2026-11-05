@@ -1,0 +1,38 @@
+# =============================================================================
+# Dataset + expériences : comparer des variantes (modèle, version de prompt) sur le
+# MÊME jeu de 20 cas, avec des évaluateurs déterministes.
+#
+# Les sorties sont SIMULÉES (pas de LLM) mais reproduisent des écarts réalistes,
+# observés pendant la préparation du cours.
+# =============================================================================
+dataset:
+  nom: helpdesk-eval
+  description: "20 demandes de support fictives de NordTech SA (routage, refus, qualification). Copie du jeu d'évaluation du cours."
+
+runs:
+  - nom: granite-8b-superviseur-v3
+    description: "Configuration de production (release v1.4.1)"
+    modele: granite4.1:8b
+    prompt_superviseur: 3
+    latence_ms: [700, 1300]
+    erreurs_routage: {C18: kb}                    # cas: spécialiste choisi à tort
+    erreurs_categorie: {C03: materiel}
+    refus_manques: []
+
+  - nom: granite-8b-superviseur-v2
+    description: "Prompt raccourci embarqué par erreur dans la release v1.4.0"
+    modele: granite4.1:8b
+    prompt_superviseur: 2
+    latence_ms: [600, 1100]
+    erreurs_routage: {C01: diagnostic, C06: diagnostic, C09: diagnostic, C10: acces, C15: kb, C17: kb}
+    erreurs_categorie: {C03: materiel, C06: materiel}
+    refus_manques: []
+
+  - nom: granite-3b-superviseur-v3
+    description: "Modèle léger : 2x plus rapide, est-il assez bon ?"
+    modele: granite4.1:3b
+    prompt_superviseur: 3
+    latence_ms: [300, 600]
+    erreurs_routage: {C01: diagnostic, C03: kb, C10: acces, C18: kb}
+    erreurs_categorie: {C03: materiel, C05: autre, C06: materiel}
+    refus_manques: [C20]                          # injection non refusée !

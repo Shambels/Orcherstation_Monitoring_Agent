@@ -1,0 +1,5 @@
+.env
+seed/.venv/
+seed/_dry_run.json
+__pycache__/
+formateur/faits.json

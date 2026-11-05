@@ -1,0 +1,209 @@
+# =============================================================================
+# Carte de l'interface Langfuse 4.46.0 (auto-hébergé, mode v4 « events_only »)
+# Libellés = ceux de la barre latérale de l'UI (en anglais dans le produit).
+# route : chemin relatif au projet (http://localhost:3100/project/explorer/<route>)
+# capture : nom du fichier dans guide/screens/ (généré par tools/capture_screens.py)
+# =============================================================================
+groupes:
+  - nom: ""
+    ecrans: [home, dashboards]
+  - nom: Observability
+    ecrans: [tracing, trace, sessions, users, alerts]
+  - nom: Prompt Management
+    ecrans: [prompts, playground]
+  - nom: Evaluation
+    ecrans: [scores, evaluators, annotation, datasets]
+  - nom: Settings
+    ecrans: [models, scoreconfigs]
+
+ecrans:
+  home:
+    libelle: Home
+    route: ""
+    role: "La vue d'ensemble du projet : volume de traces, coûts, latences et scores sur la période choisie."
+    regarder:
+      - "Le sélecteur de période en haut : il pilote tous les chiffres de la page."
+      - "Les tuiles de coût par modèle : on y voit tout de suite que gemma4:12b pèse presque autant que tout le reste."
+      - "Les graphiques de scores : la pertinence moyenne baisse nettement sur une journée."
+    questions:
+      - "Combien coûte mon assistant cette semaine ?"
+      - "Est-ce que la qualité a bougé récemment ?"
+    piege: "La période par défaut est courte (24 h). Avec le seed, passe-la sur 7 jours, sinon la plupart des données sont masquées."
+
+  dashboards:
+    libelle: Dashboards
+    route: dashboards
+    role: "Des tableaux de bord prêts à l'emploi (coût, latence, usage) et les tiens, construits widget par widget."
+    regarder:
+      - "Les dashboards fournis par Langfuse : un bon point de départ, non modifiables."
+      - "Le bouton de création d'un dashboard personnalisé, puis l'ajout de widgets (métrique, dimension, filtre)."
+      - "Les dimensions utiles ici : release, environnement, modèle, nom de score."
+    questions:
+      - "La pertinence moyenne dépend-elle de la release déployée ?"
+      - "Quel modèle consomme le plus de tokens ?"
+    piege: "Un widget agrège sur la période du dashboard : vérifie qu'elle couvre les 7 jours du seed."
+
+  tracing:
+    libelle: Tracing
+    route: traces
+    role: "LE tableau central en v4 : une ligne par observation. Le filtre « Is Root Observation = true », actif par défaut, n'affiche qu'une ligne par trace."
+    regarder:
+      - "La barre de filtres latérale, avec le nombre d'éléments par valeur : environnement, niveau, nom, modèle, user, session, tags."
+      - "Les colonnes Latency et Total Cost : clique sur l'en-tête pour trier."
+      - "La recherche, qui accepte une syntaxe du type name:routage latency:>2."
+      - "Les vues enregistrées (My Views) pour retrouver un jeu de filtres."
+    questions:
+      - "Quelles traces ont échoué ?"
+      - "Quelle est la requête la plus lente ou la plus chère ?"
+      - "Que fait l'utilisateur collab-xxxx ?"
+    piege: "Retirer le filtre Is Root Observation fait passer d'environ 190 lignes à plus de 1 500 : ce n'est pas un bug, ce sont toutes les observations."
+    v4: "En v3, il y avait un tableau Traces et un tableau Observations. En v4, il n'y a plus qu'un seul tableau d'observations, et une trace est représentée par son observation racine."
+
+  trace:
+    libelle: Détail d'une trace
+    route: "traces/{trace_id}"
+    exemple: vpn-hotel
+    role: "Le déroulé complet d'une requête : l'arbre des observations à gauche, le détail de l'élément sélectionné à droite."
+    regarder:
+      - "L'arbre : agent racine, puis garde-fou, qualification, superviseur, spécialiste, outil, retriever, rédaction."
+      - "Les icônes de type : generation, agent, tool, retriever, embedding, guardrail, event."
+      - "Sur une generation : modèle, tokens d'entrée et de sortie, coût, délai avant le premier token, prompt lié (avec sa version)."
+      - "La frise temporelle (timeline) pour voir où passe le temps, et la vue graphe pour les agents."
+      - "Les scores, les commentaires et le bouton d'annotation en haut de la trace."
+    questions:
+      - "Pourquoi l'agent a-t-il choisi ce spécialiste ?"
+      - "Quel article KB a été utilisé ?"
+      - "Où sont passées les 30 secondes ?"
+    piege: "L'entrée et la sortie de la trace sont celles de l'observation racine : pour voir ce que le LLM a réellement reçu, ouvre la generation."
+
+  sessions:
+    libelle: Sessions
+    route: sessions
+    role: "Regroupe les traces d'une même conversation (session_id). Indispensable pour un assistant multi-tours ou un flux human-in-the-loop."
+    regarder:
+      - "La liste : nombre de traces, durée, coût et utilisateurs de chaque session."
+      - "Le détail : les échanges dans l'ordre, avec les scores de chaque tour et ceux de la session."
+    questions:
+      - "Comment s'est déroulée la conversation du début à la fin ?"
+      - "À quel moment l'utilisateur a-t-il décroché ?"
+    piege: "Une session n'existe que si le code envoie un session_id. Sans lui, chaque requête reste isolée."
+
+  users:
+    libelle: Users
+    route: users
+    role: "Activité et coût par utilisateur (user_id), avec un accès direct à ses traces."
+    regarder:
+      - "Le nombre de traces et le coût cumulé par utilisateur."
+      - "Le format des identifiants : collab-8b20d4 est un pseudonyme, jamais un e-mail."
+    questions:
+      - "Qui utilise le plus l'assistant ?"
+      - "Ce collaborateur a-t-il un problème récurrent ?"
+    piege: "user_id est visible par toute personne qui a accès au projet : y mettre un e-mail revient à une fuite de données personnelles (RGPD, minimisation)."
+
+  alerts:
+    libelle: Alerts
+    route: alerts
+    role: "Des alertes sur les métriques (coût, latence, scores), disponibles en v4."
+    regarder:
+      - "Les conditions : métrique, seuil, fenêtre de temps."
+      - "Les canaux de notification configurables."
+    questions:
+      - "Comment être prévenu si la pertinence passe sous 0,6 ?"
+    piege: "Une alerte a besoin d'un canal de notification (e-mail, Slack, webhook). Sur un poste isolé, on configure, mais rien ne part."
+
+  prompts:
+    libelle: Prompts
+    route: prompts
+    role: "Le registre des prompts versionnés : chaque modification crée une version, et des étiquettes (production…) indiquent laquelle le code charge."
+    regarder:
+      - "La liste des versions avec leur message de commit."
+      - "Les étiquettes (labels) : production sur superviseur v3."
+      - "La comparaison entre deux versions (diff)."
+      - "Les métriques par version : nombre de générations, latence, coût, scores liés."
+    questions:
+      - "Quelle version est en production ?"
+      - "Qu'est-ce qui a changé entre v2 et v3 ?"
+      - "La v2 donnait-elle de moins bons scores ?"
+    piege: "Déplacer l'étiquette production, c'est déployer : sans protection (Protected Labels), n'importe quel membre peut le faire."
+
+  playground:
+    libelle: Playground
+    route: playground
+    role: "Tester un prompt avec des variables, contre un vrai modèle, directement depuis l'interface."
+    regarder:
+      - "Le chargement d'un prompt existant et le remplissage de ses variables {{question}}."
+      - "Le choix du modèle via une connexion LLM (Settings > LLM Connections)."
+    questions:
+      - "Ce prompt fonctionne-t-il avec un autre modèle ?"
+    piege: "Sans connexion LLM configurée (cas du kit en mode rejeu), le Playground s'ouvre mais ne peut rien exécuter. C'est normal."
+
+  scores:
+    libelle: Scores
+    route: scores
+    role: "Toutes les évaluations : juge LLM (pertinence), retours utilisateurs (pouce), revues humaines (ton, RGPD), évaluateurs d'expériences."
+    regarder:
+      - "Les colonnes nom, valeur, source, type de donnée (NUMERIC, BOOLEAN, CATEGORICAL)."
+      - "Le lien vers la trace ou la session notée."
+      - "Les commentaires : ils expliquent la note."
+    questions:
+      - "Quelles réponses ont été mal notées ?"
+      - "Que disent les utilisateurs mécontents ?"
+    piege: "Un score sans commentaire est difficile à exploiter. Le juge LLM doit justifier sa note."
+
+  evaluators:
+    libelle: Evaluators
+    route: evals
+    role: "Configurer des évaluations automatiques (LLM-as-a-judge, et selon la version, évaluateurs en code) sur les traces en production ou sur les expériences."
+    regarder:
+      - "Les modèles d'évaluateurs proposés et leurs variables."
+      - "Le ciblage : quelles traces (filtres), quel échantillonnage."
+    questions:
+      - "Comment noter automatiquement 10 % des réponses en production ?"
+    piege: "Un juge LLM a besoin d'une connexion LLM et coûte des tokens : échantillonne, et vérifie que le juge lui-même est fiable (AI Act : supervision humaine)."
+
+  annotation:
+    libelle: Human Annotation
+    route: annotation-queues
+    role: "Des files de relecture humaine : on y envoie des traces à vérifier, et un relecteur les note selon des configurations de score."
+    regarder:
+      - "La file revue-rgpd-securite et ses éléments."
+      - "L'écran de relecture : la trace à gauche, le formulaire de score à droite, puis l'élément suivant."
+    questions:
+      - "Qui vérifie les cas sensibles, et comment en garde-t-on la trace ?"
+    piege: "Une file non traitée ne protège personne. Prévois un responsable et une fréquence (c'est la supervision humaine de l'AI Act)."
+
+  datasets:
+    libelle: Datasets
+    route: datasets
+    role: "Les jeux de test de référence, et les expériences (runs) qui comparent des variantes sur ces mêmes cas."
+    regarder:
+      - "Le dataset helpdesk-eval : 20 cas avec la sortie attendue."
+      - "Les runs : granite-8b-superviseur-v3, granite-8b-superviseur-v2, granite-3b-superviseur-v3."
+      - "La comparaison des runs, cas par cas, avec les scores routage_correct et categorie_correcte."
+    questions:
+      - "Le modèle 3b est-il assez bon pour remplacer le 8b ?"
+      - "La v2 du prompt était-elle une régression ?"
+    piege: "Une expérience n'a de valeur que si le dataset est stable. Ne le modifie pas entre deux runs que tu veux comparer."
+    v4: "Selon la configuration, les expériences apparaissent aussi dans une entrée Experiments de la barre latérale. Sinon, elles sont dans le dataset."
+
+  models:
+    libelle: Model Definitions
+    route: settings/models
+    role: "Les prix par modèle : Langfuse calcule le coût de chaque generation à partir des tokens et de ces prix."
+    regarder:
+      - "Les définitions intégrées (OpenAI, Anthropic…) et les trois définitions ajoutées : granite4.1:8b, granite4.1:3b, gemma4:12b."
+      - "Le motif (regex) qui associe une définition au nom du modèle reçu."
+    questions:
+      - "Combien coûte réellement un modèle auto-hébergé ?"
+    piege: "Un prix ajouté APRÈS l'ingestion ne recalcule pas les coûts déjà enregistrés : on déclare les prix avant de tracer."
+
+  scoreconfigs:
+    libelle: Scores Configs
+    route: settings/scores
+    role: "Le schéma des scores : type, bornes, catégories. Il garantit des notes homogènes entre humains, juge et code."
+    regarder:
+      - "Les 6 configurations : pertinence, ton, feedback-utilisateur, securite, conformite-rgpd, satisfaction-session."
+      - "Les descriptions, affichées aux relecteurs dans les files d'annotation."
+    questions:
+      - "Que veut dire un score securite = 0 ?"
+    piege: "Sans configuration, deux relecteurs notent « bon » et « Bien » : les statistiques deviennent inutilisables."

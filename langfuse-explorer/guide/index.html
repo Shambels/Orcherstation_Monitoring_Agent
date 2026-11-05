@@ -1,0 +1,549 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Langfuse Explorer</title>
+<meta name="description" content="Guide d'exploration autonome de l'interface Langfuse v4 : carte des écrans, questions de diagnostic et missions vérifiées.">
+<style>
+:root {
+  --violet: #3B2A80;
+  --violet-profond: #261A5A;
+  --violet-clair: #6E5CC7;
+  --vert: #23AC67;
+  --vert-texte: #157A47;
+  --encre: #1D1838;
+  --encre-douce: #4A4566;
+  --papier: #F5F6FA;
+  --surface: #FFFFFF;
+  --lavande: #ECE9F7;
+  --trait: #D9D5EA;
+  --ambre: #A8620A;
+  --ambre-fond: #FCF1DF;
+  --erreur: #B3361F;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+  --sans: Arial, "Helvetica Neue", Helvetica, sans-serif;
+  --rail: 272px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --violet: #8C7BE6; --violet-profond: #17122F; --violet-clair: #A99BF0;
+    --vert: #3CCB82; --vert-texte: #4FD893; --encre: #ECEAF6; --encre-douce: #B6B1D0;
+    --papier: #120F24; --surface: #1C1736; --lavande: #251F45; --trait: #352E5E;
+    --ambre: #F0B35A; --ambre-fond: #33260F; --erreur: #FF8A73; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --violet: #8C7BE6; --violet-profond: #17122F; --violet-clair: #A99BF0;
+  --vert: #3CCB82; --vert-texte: #4FD893; --encre: #ECEAF6; --encre-douce: #B6B1D0;
+  --papier: #120F24; --surface: #1C1736; --lavande: #251F45; --trait: #352E5E;
+  --ambre: #F0B35A; --ambre-fond: #33260F; --erreur: #FF8A73; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 80px; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } * { transition: none !important; } }
+body { margin: 0; background: var(--papier); color: var(--encre); font: 16px/1.55 var(--sans); }
+a { color: var(--violet); }
+code, .id { font-family: var(--mono); font-size: .88em; }
+:focus-visible { outline: 3px solid var(--vert); outline-offset: 2px; border-radius: 4px; }
+
+/* ---------- Rail : réplique de la barre latérale Langfuse ---------- */
+.rail {
+  position: fixed; inset: 0 auto 0 0; width: var(--rail); overflow-y: auto;
+  background: var(--violet-profond); color: #E9E5FA; padding: 20px 14px 28px;
+}
+:root:not([data-theme="dark"]) .rail { background: #261A5A; }
+.marque { display: flex; align-items: center; gap: 10px; padding: 0 8px 18px; border-bottom: 1px solid rgba(255,255,255,.12); }
+.marque svg { flex: none; }
+.marque b { display: block; font-size: 17px; letter-spacing: -.01em; }
+.marque small { color: #B9B0E6; font-size: 12.5px; }
+.rail h2 { font-size: 12.5px; font-weight: 700; color: #B9B0E6; margin: 20px 8px 6px; letter-spacing: .01em; }
+.rail a { display: flex; justify-content: space-between; align-items: center; gap: 8px; color: #F1EEFF; text-decoration: none;
+  padding: 6px 10px; border-radius: 6px; font-size: 14.5px; }
+.rail a:hover { background: rgba(255,255,255,.08); }
+.rail a.actif { background: rgba(35,172,103,.22); box-shadow: inset 3px 0 0 #23AC67; }
+.rail .groupe { font-size: 12px; color: #9C92D4; margin: 10px 10px 2px; }
+.rail .compte { font-size: 12px; color: #B9B0E6; font-variant-numeric: tabular-nums; }
+.rail .compte.fini { color: #5BE39C; }
+.rail .note { font-size: 12px; color: #9C92D4; padding: 14px 10px 0; line-height: 1.45; }
+
+/* ---------- Bandeau ---------- */
+.bandeau { position: sticky; top: 0; z-index: 5; margin-left: var(--rail); background: color-mix(in srgb, var(--papier) 92%, transparent);
+  backdrop-filter: blur(6px); border-bottom: 1px solid var(--trait); padding: 10px 32px; display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
+.progression { display: flex; align-items: center; gap: 10px; flex: 1 1 260px; min-width: 220px; }
+.jauge { flex: 1; height: 10px; background: var(--lavande); border-radius: 99px; overflow: hidden; }
+.jauge i { display: block; height: 100%; width: 0; background: var(--vert); border-radius: 99px; transition: width .5s ease; }
+.progression span { font-variant-numeric: tabular-nums; font-size: 14px; color: var(--encre-douce); white-space: nowrap; }
+.reglage { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--encre-douce); }
+.reglage input { font: 14px var(--mono); padding: 5px 8px; border: 1px solid var(--trait); border-radius: 6px; background: var(--surface); color: var(--encre); width: 210px; }
+button, .bouton { font: 600 14px var(--sans); border-radius: 7px; border: 1px solid var(--violet); background: var(--violet); color: #fff;
+  padding: 7px 13px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+button.discret, .bouton.discret { background: transparent; color: var(--violet); }
+button:hover, .bouton:hover { filter: brightness(1.08); }
+
+/* ---------- Contenu ---------- */
+main { margin-left: var(--rail); padding: 8px 32px 80px; }
+.colonne { max-width: 1060px; }
+section.bloc { padding: 44px 0 8px; }
+h1 { font-size: clamp(34px, 5vw, 56px); line-height: 1.02; letter-spacing: -.03em; margin: 28px 0 14px; font-weight: 800; }
+h1 .ligne2 { display: block; color: var(--violet); }
+.chapeau { font-size: 19px; color: var(--encre-douce); max-width: 64ch; margin: 0 0 28px; }
+h2.titre { font-size: 30px; letter-spacing: -.02em; margin: 0 0 6px; }
+.sous { color: var(--encre-douce); margin: 0 0 22px; max-width: 70ch; }
+
+/* Démarrage : trois commandes en séquence */
+.etapes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; border: 1px solid var(--trait); border-radius: 12px; overflow: hidden; background: var(--surface); }
+.etapes > div { padding: 18px 20px; border-right: 1px solid var(--trait); }
+.etapes > div:last-child { border-right: 0; }
+.etapes .n { font: 800 28px var(--sans); color: var(--vert); line-height: 1; }
+.etapes h3 { margin: 8px 0 6px; font-size: 16px; }
+.etapes pre { margin: 8px 0 0; background: var(--lavande); padding: 8px 10px; border-radius: 6px; overflow-x: auto; font: 13px/1.5 var(--mono); }
+.etapes p { margin: 0; font-size: 14.5px; color: var(--encre-douce); }
+.encart { margin-top: 18px; display: flex; gap: 14px; padding: 14px 18px; border-radius: 10px; background: var(--ambre-fond); color: var(--encre); font-size: 15px; }
+.encart b { color: var(--ambre); }
+
+/* Fiche écran */
+.ecran { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 28px; padding: 30px 0; border-top: 1px solid var(--trait); }
+.ecran:first-of-type { border-top: 0; }
+.ecran header { grid-column: 1 / -1; display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+.ecran h3 { font-size: 24px; margin: 0; letter-spacing: -.015em; }
+.ecran .groupe-nom { color: var(--encre-douce); font-size: 14px; }
+.ecran header .bouton { margin-left: auto; }
+.cadre { border: 1px solid var(--trait); border-radius: 10px; overflow: hidden; background: var(--surface); align-self: start; }
+.cadre .barre { display: flex; gap: 6px; align-items: center; padding: 7px 10px; background: var(--lavande); border-bottom: 1px solid var(--trait); }
+.cadre .barre i { width: 9px; height: 9px; border-radius: 50%; background: var(--trait); }
+.cadre .barre code { margin-left: 8px; color: var(--encre-douce); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cadre img { display: block; width: 100%; height: auto; cursor: zoom-in; }
+.schema { aspect-ratio: 16 / 10; display: grid; grid-template-columns: 22% 1fr; }
+.schema .s-rail { background: var(--lavande); padding: 10px 8px; display: flex; flex-direction: column; gap: 6px; }
+.schema .s-rail span { height: 7px; border-radius: 4px; background: var(--trait); }
+.schema .s-rail span.on { background: var(--vert); }
+.schema .s-main { padding: 14px; display: flex; flex-direction: column; gap: 9px; }
+.schema .s-main span { height: 9px; border-radius: 4px; background: var(--lavande); }
+.schema .s-main em { margin-top: auto; font-style: normal; font-size: 12.5px; color: var(--encre-douce); }
+.ecran .role { font-size: 17px; margin: 0 0 12px; }
+.ecran h4 { font-size: 14px; margin: 16px 0 6px; color: var(--violet); }
+.ecran ul { margin: 0; padding-left: 18px; }
+.ecran li { margin: 3px 0; font-size: 15px; }
+.piege { margin-top: 14px; padding: 10px 14px; border-left: 3px solid var(--ambre); background: var(--ambre-fond); font-size: 14.5px; border-radius: 0 8px 8px 0; }
+.v4 { margin-top: 10px; padding: 10px 14px; border-left: 3px solid var(--violet-clair); background: var(--lavande); font-size: 14.5px; border-radius: 0 8px 8px 0; }
+.puces { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.puce { font: 600 12.5px var(--sans); padding: 3px 9px; border-radius: 99px; border: 1px solid var(--trait); background: var(--surface); color: var(--encre); text-decoration: none; cursor: pointer; }
+.puce.ok { border-color: var(--vert); color: var(--vert-texte); }
+
+/* Par question */
+.recherche { width: 100%; max-width: 560px; font: 16px var(--sans); padding: 11px 14px; border-radius: 9px; border: 1px solid var(--trait); background: var(--surface); color: var(--encre); margin-bottom: 18px; }
+.questions { columns: 2 300px; column-gap: 28px; }
+.questions a { display: block; break-inside: avoid; padding: 9px 0; border-bottom: 1px solid var(--trait); text-decoration: none; color: var(--encre); }
+.questions a span { display: block; font-size: 13px; color: var(--violet); }
+.questions a:hover { color: var(--violet); }
+
+/* Missions */
+.onglets { display: flex; gap: 6px; border-bottom: 1px solid var(--trait); margin-bottom: 18px; flex-wrap: wrap; }
+.onglets button { background: transparent; color: var(--encre-douce); border: 0; border-bottom: 3px solid transparent; border-radius: 0; padding: 10px 12px; }
+.onglets button[aria-selected="true"] { color: var(--violet); border-bottom-color: var(--violet); }
+.onglets .c { font-weight: 400; font-variant-numeric: tabular-nums; margin-left: 6px; }
+.niveau-desc { color: var(--encre-douce); margin: -6px 0 16px; }
+.missions { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(330px, 100%), 1fr)); gap: 14px; }
+.mission { background: var(--surface); border: 1px solid var(--trait); border-radius: 12px; padding: 16px 18px; display: flex; flex-direction: column; gap: 9px; }
+.mission.reussie { border-color: var(--vert); box-shadow: inset 4px 0 0 var(--vert); }
+.mission .tete { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mission .id { color: var(--encre-douce); }
+.mission h3 { font-size: 17px; margin: 0; flex: 1 1 auto; }
+.mission .etat { font: 700 12.5px var(--sans); color: var(--vert-texte); }
+.mission p { margin: 0; font-size: 15px; }
+.enjeux { display: flex; gap: 5px; flex-wrap: wrap; }
+.enjeu { font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 4px; background: var(--lavande); color: var(--violet); }
+.enjeu[data-e="RGPD"] { background: #E6E0FF; color: #3B2A80; }
+.enjeu[data-e="NIS2"] { background: var(--ambre-fond); color: var(--ambre); }
+.enjeu[data-e="AI Act"] { background: #DDF3EC; color: #0F6B4B; }
+.enjeu[data-e="FinOps"] { background: #E2F6EA; color: var(--vert-texte); }
+:root[data-theme="dark"] .enjeu[data-e="RGPD"], :root[data-theme="dark"] .enjeu[data-e="AI Act"], :root[data-theme="dark"] .enjeu[data-e="FinOps"] { background: var(--lavande); color: var(--encre); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .enjeu[data-e="RGPD"], :root:not([data-theme="light"]) .enjeu[data-e="AI Act"], :root:not([data-theme="light"]) .enjeu[data-e="FinOps"] { background: var(--lavande); color: var(--encre); } }
+.repondre { display: flex; gap: 8px; }
+.repondre input { flex: 1; min-width: 0; font: 15px var(--sans); padding: 8px 10px; border-radius: 7px; border: 1px solid var(--trait); background: var(--papier); color: var(--encre); }
+.repondre input[aria-invalid="true"] { border-color: var(--erreur); }
+.retour { font-size: 14px; min-height: 1.2em; }
+.retour.ko { color: var(--erreur); }
+.retour.ok { color: var(--vert-texte); font-weight: 700; }
+.mission details summary { cursor: pointer; font-size: 14px; color: var(--violet); }
+.mission details p { margin-top: 6px; font-size: 14.5px; color: var(--encre-douce); }
+.pourquoi { font-size: 14.5px; background: var(--lavande); padding: 9px 12px; border-radius: 8px; }
+.mission .pied { display: flex; gap: 10px; align-items: center; margin-top: auto; padding-top: 4px; font-size: 14px; flex-wrap: wrap; }
+.coche { display: inline-flex; gap: 8px; align-items: center; font-weight: 600; cursor: pointer; }
+.coche input { width: 18px; height: 18px; accent-color: var(--vert); }
+
+/* Tableaux v3/v4 et glossaire */
+.table-defile { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; min-width: 640px; background: var(--surface); border: 1px solid var(--trait); border-radius: 10px; overflow: hidden; font-size: 15px; }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--trait); vertical-align: top; }
+th { background: var(--lavande); font-size: 14px; }
+dl.glossaire { display: grid; grid-template-columns: max-content 1fr; gap: 8px 22px; }
+dl.glossaire dt { font-weight: 700; }
+dl.glossaire dd { margin: 0; color: var(--encre-douce); }
+footer { margin-top: 60px; padding-top: 18px; border-top: 1px solid var(--trait); font-size: 13.5px; color: var(--encre-douce); }
+
+/* Visionneuse */
+dialog { border: 0; padding: 0; background: transparent; max-width: 96vw; }
+dialog::backdrop { background: rgba(10, 6, 30, .8); }
+dialog img { max-width: 96vw; max-height: 90vh; border-radius: 8px; display: block; }
+
+/* ---------- Mobile ---------- */
+@media (max-width: 900px) {
+  .rail { position: static; width: auto; padding: 14px 16px; }
+  .rail nav { display: flex; flex-wrap: wrap; gap: 4px; }
+  .rail h2, .rail .groupe, .rail .note, .rail .ecrans-nav { display: none; }
+  .bandeau, main { margin-left: 0; padding-left: 16px; padding-right: 16px; }
+  .ecran { grid-template-columns: 1fr; }
+  .etapes { grid-template-columns: 1fr; }
+  .etapes > div { border-right: 0; border-bottom: 1px solid var(--trait); }
+  .reglage input { width: 160px; }
+  .missions { grid-template-columns: 1fr; }
+  dl.glossaire { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<aside class="rail" aria-label="Navigation du guide">
+  <div class="marque">
+    <svg width="34" height="34" viewBox="0 0 34 34" aria-hidden="true">
+      <rect width="34" height="34" rx="8" fill="#23AC67"/>
+      <path d="M9 23.5 L15 11 L19.5 19 L22 15 L25 23.5" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <div><b>Langfuse Explorer</b><small>HelpDesk-Ops · NordTech (fictif)</small></div>
+  </div>
+  <nav>
+    <h2>Le guide</h2>
+    <a href="#demarrer">Démarrer</a>
+    <a href="#par-question">Par question</a>
+    <a href="#missions">Missions <span class="compte" id="rail-compte"></span></a>
+    <a href="#v3v4">Ce qui change en v4</a>
+    <a href="#glossaire">Glossaire</a>
+    <h2>L'interface, écran par écran</h2>
+    <div class="ecrans-nav" id="rail-ecrans"></div>
+    <p class="note">Les entrées ci-dessus reprennent la barre latérale de Langfuse, dans le même ordre : en lisant le guide, tu apprends où cliquer.</p>
+  </nav>
+</aside>
+
+<div class="bandeau">
+  <div class="progression" aria-live="polite">
+    <div class="jauge" role="progressbar" aria-label="Missions réussies" aria-valuemin="0" id="jauge-role"><i id="jauge"></i></div>
+    <span id="jauge-texte"></span>
+  </div>
+  <label class="reglage">Langfuse <input id="base-url" spellcheck="false" aria-label="Adresse de Langfuse"></label>
+  <button class="discret" id="exporter" type="button">Exporter ma progression</button>
+  <button class="discret" id="theme" type="button" aria-label="Changer de thème">Thème</button>
+</div>
+
+<main><div class="colonne">
+
+<section class="bloc" id="demarrer">
+  <h1>Explore Langfuse<span class="ligne2">comme un enquêteur.</span></h1>
+  <p class="chapeau">Sept jours d'activité d'un helpdesk propulsé par des agents LangGraph : des réponses parfaites, une boucle infinie, une fuite de données personnelles, une injection réussie et une régression en production. À toi de tout retrouver dans l'interface.</p>
+  <div class="etapes">
+    <div><div class="n">1</div><h3>Lancer le kit</h3><p>Docker Desktop démarré, puis :</p><pre>.\start.ps1      # Windows
+./start.sh       # Linux, macOS</pre></div>
+    <div><div class="n">2</div><h3>Se connecter</h3><p>Ouvre <a id="lien-ui" href="#">l'interface</a> avec le compte affiché à la fin du script.</p><pre>explorer@helpdesk.local
+mot de passe : voir .env</pre></div>
+    <div><div class="n">3</div><h3>Régler la période</h3><p>Dans Tracing, choisis <b>7 jours</b>. Puis ouvre les missions, niveau Découverte.</p><pre>Tracing › période › 7 days</pre></div>
+  </div>
+  <div class="encart"><b>Aucun GPU requis.</b> <span>Le kit lance Langfuse seul et injecte des traces synthétiques réalistes : un portable avec Docker et 8 Go de RAM suffit (16 Go conseillés). Les liens « Ouvrir dans Langfuse » pointent vers l'adresse réglée en haut de page.</span></div>
+</section>
+
+<section class="bloc" id="par-question">
+  <h2 class="titre">Par question</h2>
+  <p class="sous">Tu as une question de diagnostic ? Trouve l'écran qui y répond. La recherche parcourt aussi les missions.</p>
+  <input class="recherche" id="recherche" type="search" placeholder="Rechercher : coût, erreur, session, RGPD…" aria-label="Rechercher une question ou une mission">
+  <div class="questions" id="questions"></div>
+</section>
+
+<section class="bloc" id="missions">
+  <h2 class="titre">Missions</h2>
+  <p class="sous">Les réponses sont vérifiées dans cette page, sans connexion. Ta progression est enregistrée dans ce navigateur : exporte-la pour la garder.</p>
+  <div class="onglets" role="tablist" id="onglets"></div>
+  <p class="niveau-desc" id="niveau-desc"></p>
+  <div class="missions" id="liste-missions"></div>
+</section>
+
+<section class="bloc" id="carte">
+  <h2 class="titre">L'interface, écran par écran</h2>
+  <p class="sous">Pour chaque écran : à quoi il sert, ce qu'il faut regarder, le piège classique, et les missions associées.</p>
+  <div id="ecrans"></div>
+</section>
+
+<section class="bloc" id="v3v4">
+  <h2 class="titre">Ce qui change en v4</h2>
+  <p class="sous">La plupart des tutoriels en ligne montrent encore la v3. Voici ce qui a bougé.</p>
+  <div class="table-defile"><table>
+    <thead><tr><th>Sujet</th><th>Langfuse v3</th><th>Langfuse v4 (ce kit)</th></tr></thead>
+    <tbody>
+      <tr><td>Modèle de données</td><td>Tables traces et observations séparées, reliées par jointure</td><td>Une seule table d'observations, largement immuable. Une trace est l'ensemble des observations qui partagent un trace_id.</td></tr>
+      <tr><td>Écran Tracing</td><td>Un tableau Traces et un tableau Observations</td><td>Un seul tableau, filtré par défaut sur <code>Is Root Observation = true</code> (une ligne par trace)</td></tr>
+      <tr><td>Attributs de trace</td><td>Posés une fois sur la trace</td><td>Propagés sur chaque observation (<code>propagate_attributes</code>) : sinon les agrégats par utilisateur ou par session sont incomplets</td></tr>
+      <tr><td>Ingestion</td><td>API batch <code>/api/public/ingestion</code></td><td>OpenTelemetry (<code>/api/public/otel</code>). L'API batch n'accepte plus que les scores.</td></tr>
+      <tr><td>Lecture par API</td><td><code>/traces</code>, <code>/observations</code>, <code>/sessions</code></td><td>Observations v2, Scores v3, Metrics v2. Les anciennes routes répondent 404 en mode events_only.</td></tr>
+      <tr><td>SDK</td><td>Python v2/v3, <code>LANGFUSE_HOST</code></td><td>Python v4 (≥ 4.7 pour le temps réel), <code>LANGFUSE_BASE_URL</code>. Le SDK v5 exige un serveur ≥ 4.59.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section class="bloc" id="glossaire">
+  <h2 class="titre">Glossaire</h2>
+  <dl class="glossaire">
+    <dt>Trace</dt><dd>Le traitement complet d'une requête : toutes les observations qui partagent un trace_id.</dd>
+    <dt>Observation</dt><dd>Une étape : generation (appel LLM), agent, tool, retriever, embedding, guardrail, chain, span, event.</dd>
+    <dt>Observation racine</dt><dd>L'observation sans parent. Son entrée et sa sortie sont celles de la trace.</dd>
+    <dt>Session</dt><dd>Les traces d'une même conversation, regroupées par session_id.</dd>
+    <dt>Environnement</dt><dd>Séparation des données : production, formation, sdk-experiment…</dd>
+    <dt>Release</dt><dd>Version de l'application qui a produit la trace (v1.3.0, v1.4.0…).</dd>
+    <dt>Score</dt><dd>Une évaluation : NUMERIC, BOOLEAN ou CATEGORICAL, attachée à une trace, une observation ou une session.</dd>
+    <dt>Prompt versionné</dt><dd>Un prompt stocké dans Langfuse, dont chaque modification crée une version. L'étiquette production désigne celle que charge le code.</dd>
+    <dt>Dataset, run</dt><dd>Un jeu de cas de référence, et une exécution (expérience) d'une variante sur ce jeu.</dd>
+    <dt>TTFT</dt><dd>Time to first token : délai avant le premier token généré. C'est la latence ressentie en streaming.</dd>
+  </dl>
+</section>
+
+<footer>
+  Kit Langfuse Explorer · Langfuse <b>4.46.0</b> auto-hébergé, SDK Python 4.15.6 · guide généré le 05/11/2026.
+  Données entièrement fictives (NordTech SA n'existe pas). Captures : <code>tools/capture_screens.py</code>.
+</footer>
+</div></main>
+
+<dialog id="visionneuse" aria-label="Capture agrandie"><img alt=""></dialog>
+
+<script>
+const DATA = {"projet": "explorer", "version": "4.46.0", "groupes": [{"nom": "", "ecrans": ["home", "dashboards"]}, {"nom": "Observability", "ecrans": ["tracing", "trace", "sessions", "users", "alerts"]}, {"nom": "Prompt Management", "ecrans": ["prompts", "playground"]}, {"nom": "Evaluation", "ecrans": ["scores", "evaluators", "annotation", "datasets"]}, {"nom": "Settings", "ecrans": ["models", "scoreconfigs"]}], "ecrans": {"home": {"libelle": "Home", "route": "", "role": "La vue d'ensemble du projet : volume de traces, coûts, latences et scores sur la période choisie.", "regarder": ["Le sélecteur de période en haut : il pilote tous les chiffres de la page.", "Les tuiles de coût par modèle : on y voit tout de suite que gemma4:12b pèse presque autant que tout le reste.", "Les graphiques de scores : la pertinence moyenne baisse nettement sur une journée."], "questions": ["Combien coûte mon assistant cette semaine ?", "Est-ce que la qualité a bougé récemment ?"], "piege": "La période par défaut est courte (24 h). Avec le seed, passe-la sur 7 jours, sinon la plupart des données sont masquées."}, "dashboards": {"libelle": "Dashboards", "route": "dashboards", "role": "Des tableaux de bord prêts à l'emploi (coût, latence, usage) et les tiens, construits widget par widget.", "regarder": ["Les dashboards fournis par Langfuse : un bon point de départ, non modifiables.", "Le bouton de création d'un dashboard personnalisé, puis l'ajout de widgets (métrique, dimension, filtre).", "Les dimensions utiles ici : release, environnement, modèle, nom de score."], "questions": ["La pertinence moyenne dépend-elle de la release déployée ?", "Quel modèle consomme le plus de tokens ?"], "piege": "Un widget agrège sur la période du dashboard : vérifie qu'elle couvre les 7 jours du seed."}, "tracing": {"libelle": "Tracing", "route": "traces", "role": "LE tableau central en v4 : une ligne par observation. Le filtre « Is Root Observation = true », actif par défaut, n'affiche qu'une ligne par trace.", "regarder": ["La barre de filtres latérale, avec le nombre d'éléments par valeur : environnement, niveau, nom, modèle, user, session, tags.", "Les colonnes Latency et Total Cost : clique sur l'en-tête pour trier.", "La recherche, qui accepte une syntaxe du type name:routage latency:>2.", "Les vues enregistrées (My Views) pour retrouver un jeu de filtres."], "questions": ["Quelles traces ont échoué ?", "Quelle est la requête la plus lente ou la plus chère ?", "Que fait l'utilisateur collab-xxxx ?"], "piege": "Retirer le filtre Is Root Observation fait passer d'environ 190 lignes à plus de 1 500 : ce n'est pas un bug, ce sont toutes les observations.", "v4": "En v3, il y avait un tableau Traces et un tableau Observations. En v4, il n'y a plus qu'un seul tableau d'observations, et une trace est représentée par son observation racine."}, "trace": {"libelle": "Détail d'une trace", "route": "traces/{trace_id}", "exemple": "vpn-hotel", "role": "Le déroulé complet d'une requête : l'arbre des observations à gauche, le détail de l'élément sélectionné à droite.", "regarder": ["L'arbre : agent racine, puis garde-fou, qualification, superviseur, spécialiste, outil, retriever, rédaction.", "Les icônes de type : generation, agent, tool, retriever, embedding, guardrail, event.", "Sur une generation : modèle, tokens d'entrée et de sortie, coût, délai avant le premier token, prompt lié (avec sa version).", "La frise temporelle (timeline) pour voir où passe le temps, et la vue graphe pour les agents.", "Les scores, les commentaires et le bouton d'annotation en haut de la trace."], "questions": ["Pourquoi l'agent a-t-il choisi ce spécialiste ?", "Quel article KB a été utilisé ?", "Où sont passées les 30 secondes ?"], "piege": "L'entrée et la sortie de la trace sont celles de l'observation racine : pour voir ce que le LLM a réellement reçu, ouvre la generation.", "route_exemple": "traces/551f631e04f89410417d911ff9ab2d3f"}, "sessions": {"libelle": "Sessions", "route": "sessions", "role": "Regroupe les traces d'une même conversation (session_id). Indispensable pour un assistant multi-tours ou un flux human-in-the-loop.", "regarder": ["La liste : nombre de traces, durée, coût et utilisateurs de chaque session.", "Le détail : les échanges dans l'ordre, avec les scores de chaque tour et ceux de la session."], "questions": ["Comment s'est déroulée la conversation du début à la fin ?", "À quel moment l'utilisateur a-t-il décroché ?"], "piege": "Une session n'existe que si le code envoie un session_id. Sans lui, chaque requête reste isolée."}, "users": {"libelle": "Users", "route": "users", "role": "Activité et coût par utilisateur (user_id), avec un accès direct à ses traces.", "regarder": ["Le nombre de traces et le coût cumulé par utilisateur.", "Le format des identifiants : collab-8b20d4 est un pseudonyme, jamais un e-mail."], "questions": ["Qui utilise le plus l'assistant ?", "Ce collaborateur a-t-il un problème récurrent ?"], "piege": "user_id est visible par toute personne qui a accès au projet : y mettre un e-mail revient à une fuite de données personnelles (RGPD, minimisation)."}, "alerts": {"libelle": "Alerts", "route": "alerts", "role": "Des alertes sur les métriques (coût, latence, scores), disponibles en v4.", "regarder": ["Les conditions : métrique, seuil, fenêtre de temps.", "Les canaux de notification configurables."], "questions": ["Comment être prévenu si la pertinence passe sous 0,6 ?"], "piege": "Une alerte a besoin d'un canal de notification (e-mail, Slack, webhook). Sur un poste isolé, on configure, mais rien ne part."}, "prompts": {"libelle": "Prompts", "route": "prompts", "role": "Le registre des prompts versionnés : chaque modification crée une version, et des étiquettes (production…) indiquent laquelle le code charge.", "regarder": ["La liste des versions avec leur message de commit.", "Les étiquettes (labels) : production sur superviseur v3.", "La comparaison entre deux versions (diff).", "Les métriques par version : nombre de générations, latence, coût, scores liés."], "questions": ["Quelle version est en production ?", "Qu'est-ce qui a changé entre v2 et v3 ?", "La v2 donnait-elle de moins bons scores ?"], "piege": "Déplacer l'étiquette production, c'est déployer : sans protection (Protected Labels), n'importe quel membre peut le faire."}, "playground": {"libelle": "Playground", "route": "playground", "role": "Tester un prompt avec des variables, contre un vrai modèle, directement depuis l'interface.", "regarder": ["Le chargement d'un prompt existant et le remplissage de ses variables {{question}}.", "Le choix du modèle via une connexion LLM (Settings > LLM Connections)."], "questions": ["Ce prompt fonctionne-t-il avec un autre modèle ?"], "piege": "Sans connexion LLM configurée (cas du kit en mode rejeu), le Playground s'ouvre mais ne peut rien exécuter. C'est normal."}, "scores": {"libelle": "Scores", "route": "scores", "role": "Toutes les évaluations : juge LLM (pertinence), retours utilisateurs (pouce), revues humaines (ton, RGPD), évaluateurs d'expériences.", "regarder": ["Les colonnes nom, valeur, source, type de donnée (NUMERIC, BOOLEAN, CATEGORICAL).", "Le lien vers la trace ou la session notée.", "Les commentaires : ils expliquent la note."], "questions": ["Quelles réponses ont été mal notées ?", "Que disent les utilisateurs mécontents ?"], "piege": "Un score sans commentaire est difficile à exploiter. Le juge LLM doit justifier sa note."}, "evaluators": {"libelle": "Evaluators", "route": "evals", "role": "Configurer des évaluations automatiques (LLM-as-a-judge, et selon la version, évaluateurs en code) sur les traces en production ou sur les expériences.", "regarder": ["Les modèles d'évaluateurs proposés et leurs variables.", "Le ciblage : quelles traces (filtres), quel échantillonnage."], "questions": ["Comment noter automatiquement 10 % des réponses en production ?"], "piege": "Un juge LLM a besoin d'une connexion LLM et coûte des tokens : échantillonne, et vérifie que le juge lui-même est fiable (AI Act : supervision humaine)."}, "annotation": {"libelle": "Human Annotation", "route": "annotation-queues", "role": "Des files de relecture humaine : on y envoie des traces à vérifier, et un relecteur les note selon des configurations de score.", "regarder": ["La file revue-rgpd-securite et ses éléments.", "L'écran de relecture : la trace à gauche, le formulaire de score à droite, puis l'élément suivant."], "questions": ["Qui vérifie les cas sensibles, et comment en garde-t-on la trace ?"], "piege": "Une file non traitée ne protège personne. Prévois un responsable et une fréquence (c'est la supervision humaine de l'AI Act)."}, "datasets": {"libelle": "Datasets", "route": "datasets", "role": "Les jeux de test de référence, et les expériences (runs) qui comparent des variantes sur ces mêmes cas.", "regarder": ["Le dataset helpdesk-eval : 20 cas avec la sortie attendue.", "Les runs : granite-8b-superviseur-v3, granite-8b-superviseur-v2, granite-3b-superviseur-v3.", "La comparaison des runs, cas par cas, avec les scores routage_correct et categorie_correcte."], "questions": ["Le modèle 3b est-il assez bon pour remplacer le 8b ?", "La v2 du prompt était-elle une régression ?"], "piege": "Une expérience n'a de valeur que si le dataset est stable. Ne le modifie pas entre deux runs que tu veux comparer.", "v4": "Selon la configuration, les expériences apparaissent aussi dans une entrée Experiments de la barre latérale. Sinon, elles sont dans le dataset."}, "models": {"libelle": "Model Definitions", "route": "settings/models", "role": "Les prix par modèle : Langfuse calcule le coût de chaque generation à partir des tokens et de ces prix.", "regarder": ["Les définitions intégrées (OpenAI, Anthropic…) et les trois définitions ajoutées : granite4.1:8b, granite4.1:3b, gemma4:12b.", "Le motif (regex) qui associe une définition au nom du modèle reçu."], "questions": ["Combien coûte réellement un modèle auto-hébergé ?"], "piege": "Un prix ajouté APRÈS l'ingestion ne recalcule pas les coûts déjà enregistrés : on déclare les prix avant de tracer."}, "scoreconfigs": {"libelle": "Scores Configs", "route": "settings/scores", "role": "Le schéma des scores : type, bornes, catégories. Il garantit des notes homogènes entre humains, juge et code.", "regarder": ["Les 6 configurations : pertinence, ton, feedback-utilisateur, securite, conformite-rgpd, satisfaction-session.", "Les descriptions, affichées aux relecteurs dans les files d'annotation."], "questions": ["Que veut dire un score securite = 0 ?"], "piege": "Sans configuration, deux relecteurs notent « bon » et « Bien » : les statistiques deviennent inutilisables."}}, "niveaux": [{"id": "decouverte", "nom": "Découverte", "description": "Se repérer : où est quoi, comment lire une trace."}, {"id": "enquete", "nom": "Enquête", "description": "Diagnostiquer : erreurs, lenteurs, coûts, comportements de l'agent."}, {"id": "expert", "nom": "Expert", "description": "Gouverner : données personnelles, sécurité, régressions, décisions."}], "missions": [{"id": "D01", "niveau": "decouverte", "ecran": "tracing", "titre": "Régler la période", "type": "action", "consigne": "Ouvre Tracing et passe la période sur les 7 derniers jours. Combien de traces vois-tu avant et après ?", "indice": "Le sélecteur de période est en haut du tableau. Par défaut, il couvre une journée.", "pourquoi": "Un tableau vide ou presque vide ne veut pas dire qu'il n'y a pas de données : regarde toujours d'abord la période et les filtres actifs.", "enjeux": ["Fiabilité"], "route": "traces", "hashes": []}, {"id": "D02", "niveau": "decouverte", "ecran": "tracing", "titre": "Combien d'environnements ?", "type": "reponse", "consigne": "Dans la barre de filtres, combien de valeurs différentes prend « Environment » sur 7 jours ?", "indice": "production pour l'application, formation pour les essais des apprenants… et un troisième, créé automatiquement par les expériences du SDK.", "pourquoi": "Séparer les environnements évite de mélanger les tests et la production dans les coûts, les scores et les alertes.", "enjeux": ["Qualité"], "route": "traces", "hashes": ["809c23a64b1957624d3c899913b8785da4bf5f0225b68bb8c140187c3b231a3e", "cad4619b1bf08f6b5ef1163e6b09c82ee5043177deac6658637177b8e8c69ae1"]}, {"id": "D03", "niveau": "decouverte", "ecran": "trace", "titre": "Quel article KB ?", "type": "reponse", "consigne": "Ouvre la trace « Comment configurer le VPN depuis l'hôtel ? ». Quel article de la base de connaissances le retriever a-t-il renvoyé ?", "indice": "Déplie l'outil rechercher_procedures, puis sélectionne l'observation de type retriever.", "pourquoi": "Dans un RAG, la qualité de la réponse dépend d'abord de ce qui a été retrouvé : c'est la première chose à vérifier.", "enjeux": ["Qualité"], "route": "traces/551f631e04f89410417d911ff9ab2d3f", "hashes": ["a9ce4d4dd0eeb6b55aa7e78d76bf2ee4ca620d1770c1839b86160c9e6996fe68"]}, {"id": "D04", "niveau": "decouverte", "ecran": "trace", "titre": "Compter les appels LLM", "type": "reponse", "consigne": "Dans cette même trace, combien d'observations de type generation (appels à un LLM) y a-t-il ?", "indice": "L'embedding de la question n'est pas une generation : c'est un type à part.", "pourquoi": "Chaque generation coûte des tokens et du temps. Un agent qui en enchaîne beaucoup pour une question simple mérite une revue d'architecture.", "enjeux": ["FinOps"], "route": "traces/551f631e04f89410417d911ff9ab2d3f", "hashes": ["1ffcde209f56e47d0559a83f69db5954f61fd010a62be14f777c87fca96dae4f", "35619f784dfe506590845179e5c1a0ff201bb7ae638e8d5758a7c9ae783d62b5"]}, {"id": "D05", "niveau": "decouverte", "ecran": "trace", "titre": "Quel modèle qualifie ?", "type": "reponse", "consigne": "Quel modèle a été utilisé pour l'étape « qualification » ?", "indice": "Sélectionne la generation qualification : le modèle est affiché en tête du détail.", "pourquoi": "Utiliser un petit modèle pour une tâche simple (classer, extraire) est l'un des leviers FinOps les plus efficaces.", "enjeux": ["FinOps"], "route": "traces/551f631e04f89410417d911ff9ab2d3f", "hashes": ["3033906e57f964d9c79f86c01486a44c0c995e8e3a6cfcda4b49282f10671d8f", "7e2dc854aba8dd32272b07324e491edfacd943d464a4ee45eafaeacbf1844667"]}, {"id": "D06", "niveau": "decouverte", "ecran": "sessions", "titre": "Une session human-in-the-loop", "type": "reponse", "consigne": "Ouvre la session sess-incident-erp-p1. Combien de traces contient-elle ?", "indice": "La demande initiale, la reprise après validation, puis le suivi.", "pourquoi": "Avec un interrupt, une même demande produit plusieurs traces. Seule la session permet de reconstituer le parcours complet.", "enjeux": ["Fiabilité"], "route": "sessions/sess-incident-erp-p1", "hashes": ["809c23a64b1957624d3c899913b8785da4bf5f0225b68bb8c140187c3b231a3e", "cad4619b1bf08f6b5ef1163e6b09c82ee5043177deac6658637177b8e8c69ae1"]}, {"id": "D07", "niveau": "decouverte", "ecran": "sessions", "titre": "Le numéro de ticket", "type": "reponse", "consigne": "Dans cette session, quel numéro de ticket P1 a été créé ?", "indice": "Regarde la sortie de la trace reprendre-apres-validation, ou l'événement ticket-cree.", "pourquoi": "Relier une trace à un objet métier (ticket, commande) permet de répondre à « que s'est-il passé pour ce client ? ».", "enjeux": ["Fiabilité"], "route": "sessions/sess-incident-erp-p1", "hashes": ["d89e34a6cd9adc6bd6d6072c01a1db8304aef6006afd477799096db43c907afb"]}, {"id": "D08", "niveau": "decouverte", "ecran": "users", "titre": "L'utilisateur le plus actif", "type": "reponse", "consigne": "Sur 7 jours, quel utilisateur a le plus de traces ?", "indice": "Trie la liste Users par nombre de traces.", "pourquoi": "Les gros consommateurs sont souvent ceux qui rencontrent des problèmes récurrents, ou ceux qui détournent l'outil de son usage.", "enjeux": ["FinOps"], "route": "users", "hashes": ["9049540f57cab8865978669ea3aa7f13a0f43ca58b128dea7984c554cc290594", "bd83a583d2585972dfa6a9deeccdfe3eec62fd67a129486f204645e944d4f422"]}, {"id": "D09", "niveau": "decouverte", "ecran": "prompts", "titre": "La version en production", "type": "reponse", "consigne": "Quelle version du prompt superviseur porte l'étiquette production ?", "indice": "Prompts > superviseur : les étiquettes sont affichées à côté de chaque version.", "pourquoi": "C'est l'étiquette, pas le code, qui décide du prompt utilisé : on change de prompt sans redéployer l'application.", "enjeux": ["Qualité"], "route": "prompts/superviseur", "hashes": ["4decadeca1072f57c7dd0c6e981b1ea737a1df1b2c961fd35efe45aab998591e", "809c23a64b1957624d3c899913b8785da4bf5f0225b68bb8c140187c3b231a3e", "cccc0b9d8c4eb2b8a2d4938217b1e2a20312e581d97ab8dcb5c59223e2901eae"]}, {"id": "D10", "niveau": "decouverte", "ecran": "models", "titre": "Le prix d'un modèle local", "type": "reponse", "consigne": "Quel prix de sortie a été déclaré pour gemma4:12b, en dollars par million de tokens ?", "indice": "Settings > Model Definitions. Selon l'affichage, le prix est donné par token ou par million de tokens.", "pourquoi": "Un modèle auto-hébergé n'est pas gratuit (GPU, électricité, exploitation). Lui donner un prix interne rend les coûts comparables.", "enjeux": ["FinOps"], "route": "settings/models", "hashes": ["409d23d6978b00cf20add64372bc6c46f926d4e509c856012f65806f442581f1", "4fafe47c215efce97629632885421e7da9aa794c35006b34a6f65ca12517a577", "febc14eaf48365d359140f85512b7c04c80db07ff9c4a47753e693e3141d4a2f"]}, {"id": "E01", "niveau": "enquete", "ecran": "tracing", "titre": "La trace en échec", "type": "reponse", "consigne": "Filtre le niveau ERROR. Quel type d'erreur a fait échouer une trace complète ?", "indice": "Une seule trace a son observation racine en ERROR. Lis son status message.", "pourquoi": "Le niveau et le status message sont ce que les alertes et les dashboards exploitent : une erreur bien nommée se diagnostique en secondes.", "enjeux": ["Fiabilité"], "route": "traces", "hashes": ["c74cffb75281cf57e010ea40d7a8649de3f42017429aa6b24a71e6dec2b10c9e"]}, {"id": "E02", "niveau": "enquete", "ecran": "trace", "titre": "La limite atteinte", "type": "reponse", "consigne": "Dans cette trace, quelle valeur de recursion_limit a été atteinte ?", "indice": "Le message d'erreur la donne, et elle figure aussi dans les métadonnées de l'agent racine.", "pourquoi": "recursion_limit est un garde-fou de coût : sans lui, une boucle d'agent consomme des tokens jusqu'au timeout.", "enjeux": ["FinOps", "Fiabilité"], "route": "traces/e527858a55f8163c42ab70bf633a23ad", "hashes": ["e5019866723e5cf9057e32a222804e68b1c3419486beb782528db040d8b8f464"]}, {"id": "E03", "niveau": "enquete", "ecran": "trace", "titre": "Le prompt coupable", "type": "reponse", "consigne": "Quelle version du prompt superviseur utilisaient les générations « routage » de cette trace ?", "indice": "Sélectionne une generation routage : le prompt lié et sa version apparaissent dans le détail.", "pourquoi": "Relier chaque generation à une version de prompt permet de remonter d'un incident à la modification qui l'a causé.", "enjeux": ["Qualité"], "route": "traces/e527858a55f8163c42ab70bf633a23ad", "hashes": ["5174c5b2e16c717d3b8c81622c70104b92c8cdbcbae4e4c24441ed464618e9e3", "82e45c6bcd9c0a168cbf8f6b509e7c81085af7a82b9fafd96056be364bb0abb8", "d26d2b1cb7ffba1f6b975136ff0c0e6c4ec107fa365cc90b7a334ce6619077d7"]}, {"id": "E04", "niveau": "enquete", "ecran": "trace", "titre": "Une erreur qui ne fait pas échouer", "type": "reponse", "consigne": "Une autre trace contient une observation en ERROR, mais l'utilisateur a quand même reçu une réponse. Quel outil a échoué ?", "indice": "Filtre level = ERROR et retire le filtre Is Root Observation : tu verras l'observation fautive.", "pourquoi": "Une observation en erreur n'est pas forcément une trace en échec : le repli (fallback) a fonctionné. Les deux niveaux se surveillent séparément.", "enjeux": ["Fiabilité"], "route": "traces/69c6cd38ac424ca303f0872180589f43", "hashes": ["262ea11682ca2dd5ec491798ea35053c6e2d269277d2dbf6132f0ca9bc250975"]}, {"id": "E05", "niveau": "enquete", "ecran": "trace", "titre": "Le réseau instable", "type": "reponse", "consigne": "Ouvre la trace où srv-erp-02 est pingé avec des timeouts. Combien de tentatives au total pour ping_serveur ?", "indice": "Deux observations en WARNING, puis une réussie.", "pourquoi": "Les retries masquent les pannes à l'utilisateur, mais pas au temps de réponse. La timeline montre combien ils coûtent.", "enjeux": ["Fiabilité"], "route": "traces/4561c9c3823412ec8b2dfbbf9e6e0303", "hashes": ["809c23a64b1957624d3c899913b8785da4bf5f0225b68bb8c140187c3b231a3e", "cad4619b1bf08f6b5ef1163e6b09c82ee5043177deac6658637177b8e8c69ae1"]}, {"id": "E06", "niveau": "enquete", "ecran": "tracing", "titre": "La trace la plus lente", "type": "reponse", "consigne": "Trie par latence décroissante. Sur quel moteur d'inférence (métadonnée backend de l'agent racine) tournait la trace la plus lente ?", "indice": "Ouvre la trace et regarde les métadonnées de l'observation traiter-demande.", "pourquoi": "Le plan B sur CPU fonctionne, mais un 8B y est environ 10 fois plus lent : c'est une décision d'infrastructure, pas un bug.", "enjeux": ["Fiabilité", "FinOps"], "route": "traces", "hashes": ["7725f978bfa94331bae33a77a590e52d2ddd8008b43d071ae663bb2a2b76ade4", "7d37421f3871829268d10b548e107f0e7182191b1195085e070ca7c793eb7179"]}, {"id": "E07", "niveau": "enquete", "ecran": "tracing", "titre": "La trace la plus chère", "type": "reponse", "consigne": "Trie par coût total décroissant. Quel modèle a produit la generation la plus coûteuse de la trace la plus chère ?", "indice": "Ouvre la trace et compare le coût de chaque generation.", "pourquoi": "Quelques requêtes atypiques font souvent l'essentiel de la facture : on les repère en triant, pas en faisant des moyennes.", "enjeux": ["FinOps"], "route": "traces", "hashes": ["1fb741a6224eaa842da0d54be24f0ef0d078e62817f09a7d928f344fdb252c1e"]}, {"id": "E08", "niveau": "enquete", "ecran": "trace", "titre": "Pourquoi si chère ?", "type": "reponse", "consigne": "Dans cette trace, combien de tokens d'entrée la generation redaction-reponse a-t-elle consommés ?", "indice": "Les tokens sont affichés dans l'usage de la generation (input / output).", "pourquoi": "Un contexte énorme (tout l'historique dans le prompt) coûte cher à chaque appel. Résumer en amont ou limiter le RAG est souvent la vraie correction.", "enjeux": ["FinOps"], "route": "traces/712c8fa546ea039eda9eabd8ba32dfce", "hashes": ["40382a26463886881ee46b8838717ad398ce6544ab15295585b326a90b6ca994", "5e0cbcf50d673cf6e5734fef04a46ab31308fb35c22b4da42de9906431884b31"]}, {"id": "E09", "niveau": "enquete", "ecran": "tracing", "titre": "Une demande en néerlandais", "type": "reponse", "consigne": "Filtre le tag langue:nl. Quel article la réponse cite-t-elle comme source ?", "indice": "La sortie de la trace se termine par « Bron: … ».", "pourquoi": "Les tags servent à découper le trafic (langue, canal, fonctionnalité) pour comparer qualité et coûts par segment.", "enjeux": ["Qualité"], "route": "traces/bcdc8547be14cb70291ada4dce661cd0", "hashes": ["a9ce4d4dd0eeb6b55aa7e78d76bf2ee4ca620d1770c1839b86160c9e6996fe68"]}, {"id": "E10", "niveau": "enquete", "ecran": "trace", "titre": "Le garde-fou en action", "type": "reponse", "consigne": "Trouve la demande « mode maintenance ». Cite une règle du garde-fou qui l'a bloquée.", "indice": "Observation garde-fou-entree, champ regles_declenchees de la sortie.", "pourquoi": "Tracer les refus est aussi important que tracer les réponses : c'est ce qui permet de mesurer les faux positifs et les attaques.", "enjeux": ["NIS2"], "route": "traces/8a937bd5c12e02a4dd72f68e46270c0d", "hashes": ["27f6d69e92191fbc2792ce710143457fc4cf3b8a3b8d6cce73ad7e292370a8d1", "ec22466cbb36f2daf9209ee2db51fd9aa4e6be6b5753089d24cca5a164a45d4b"]}, {"id": "E11", "niveau": "enquete", "ecran": "sessions", "titre": "Le décrochage", "type": "reponse", "consigne": "Ouvre la session sess-a41d07-teams. À quel tour (1 à 4) l'utilisateur a-t-il mis un pouce baissé ?", "indice": "Le score feedback-utilisateur vaut 0 sur un seul tour.", "pourquoi": "Lire la conversation au moment du pouce baissé montre ce qui a déçu : ici, la réponse répétait ce que l'utilisateur avait déjà essayé.", "enjeux": ["Qualité"], "route": "sessions/sess-a41d07-teams", "hashes": ["81892d94d01257eda75db416b399c96e2aa0f9bb54fdad0bb6c94518503bc30e", "82e45c6bcd9c0a168cbf8f6b509e7c81085af7a82b9fafd96056be364bb0abb8", "b13cdd5f9079c25bcbd2df6f6bad56b7f71ec0f708137bad995f20ff7dc53936"]}, {"id": "E12", "niveau": "enquete", "ecran": "trace", "titre": "Qui a validé ?", "type": "reponse", "consigne": "Dans l'incident ERP, quel identifiant a validé le ticket P1 ?", "indice": "Entrée de la trace reprendre-apres-validation.", "pourquoi": "Pour une décision à fort impact, la trace doit prouver qu'un humain a validé, et lequel : c'est la supervision humaine exigée par l'AI Act.", "enjeux": ["AI Act"], "route": "traces/d90a167c254437d4d8647811ddb30240", "hashes": ["276c27dce0e570e0ad1c500837ed85d77c9991070ec36225b17453291477acfa"]}, {"id": "X01", "niveau": "expert", "ecran": "tracing", "titre": "La fuite de données", "type": "reponse", "consigne": "Une trace contient un IBAN en clair, de l'entrée jusqu'à la réponse. Quel est son user_id ?", "indice": "Utilise la recherche du tableau (par exemple sur BE71 ou IBAN). Si elle ne porte pas sur le contenu, passe en revue les traces taguées specialiste:ticketing.", "pourquoi": "Les traces sont des données personnelles dès qu'elles contiennent un nom, un e-mail ou un IBAN. Il faut un masquage avant l'envoi, une rétention limitée et un accès restreint (RGPD, art. 5 et 32).", "enjeux": ["RGPD"], "route": "traces", "hashes": ["9049540f57cab8865978669ea3aa7f13a0f43ca58b128dea7984c554cc290594", "bd83a583d2585972dfa6a9deeccdfe3eec62fd67a129486f204645e944d4f422"]}, {"id": "X02", "niveau": "expert", "ecran": "trace", "titre": "La version corrigée", "type": "reponse", "consigne": "La même demande existe en version masquée. Combien d'entités le garde-fou masquage-pii a-t-il masquées ?", "indice": "Observation masquage-pii, sortie entites_masquees : additionne les valeurs.", "pourquoi": "Le masquage doit se faire avant tout appel LLM et avant l'envoi à Langfuse (option mask du SDK) : une fois stockée, une donnée est difficile à effacer.", "enjeux": ["RGPD"], "route": "traces/6dfe60803d100a7449172af889675514", "hashes": ["1ffcde209f56e47d0559a83f69db5954f61fd010a62be14f777c87fca96dae4f", "35619f784dfe506590845179e5c1a0ff201bb7ae638e8d5758a7c9ae783d62b5"]}, {"id": "X03", "niveau": "expert", "ecran": "scores", "titre": "L'incident de sécurité", "type": "reponse", "consigne": "Filtre les scores securite = 0. Quelle consigne l'utilisateur a-t-il glissée dans sa demande ?", "indice": "Ouvre la trace notée : la fin de la question est une instruction adressée à l'assistant.", "pourquoi": "Une injection indirecte réussie est un incident : il se détecte (score, alerte), se qualifie, se consigne et, selon l'impact, se notifie (NIS2, art. 23).", "enjeux": ["NIS2"], "route": "scores", "hashes": ["8e32ea91e195d4f95094be8e3ceb2e2372caa6820cb248009924e5e9a8a73022", "cf2df4baa59ad815aa83a6979dfa3f2c418dd6b1d1a30a5146aec66e6e95d1ba"]}, {"id": "X04", "niveau": "expert", "ecran": "trace", "titre": "La décision du RSSI", "type": "reponse", "consigne": "Sur cette trace, un commentaire du RSSI cite un article de NIS2. Lequel ?", "indice": "Les commentaires sont accessibles en haut de la trace.", "pourquoi": "Le commentaire garde la trace de la décision (notifier ou non) au plus près de la preuve technique : utile en audit.", "enjeux": ["NIS2"], "route": "traces/c3c2a6d184a4ba5ea7ba0be4bd512e40", "hashes": ["213fcb193fd47beabcc67173a97925b6a703e43e82a75c3e937785d7f97235f9", "2427e26cd159636495e6945cbfd0fc572a988acf6a98e9791cc6540a0965d3ae", "f4015d7b36b9c2b0f0bc1fbc73f28795e5b2f92babf73c9575c2d2dbd0ad27e4"]}, {"id": "X05", "niveau": "expert", "ecran": "annotation", "titre": "Relire comme un DPO", "type": "action", "consigne": "Ouvre la file revue-rgpd-securite et traite ses éléments : note conformite-rgpd et securite pour chacun, puis passe au suivant.", "indice": "Human Annotation > revue-rgpd-securite.", "pourquoi": "L'AI Act (art. 14) et le RGPD demandent une supervision humaine effective : une file avec un responsable et une trace des décisions.", "enjeux": ["AI Act", "RGPD"], "route": "annotation-queues", "hashes": []}, {"id": "X06", "niveau": "expert", "ecran": "dashboards", "titre": "Trouver la régression", "type": "reponse", "consigne": "Sur 7 jours, la pertinence moyenne a chuté pendant une journée. Quelle release était alors déployée ?", "indice": "Crée un widget : moyenne du score pertinence, découpée par release. Ou filtre Tracing par release et compare les scores.", "pourquoi": "Taguer chaque trace avec la release transforme « ça marche moins bien depuis hier » en diagnostic objectif.", "enjeux": ["Qualité"], "route": "dashboards", "hashes": ["8293fca53e88ebce99ddc4e9f7ec768f1254c7af022cdc2ea8830669ce10373d", "abff8c094c7bd57a688e36c9a225e443736925de0f59ae5f67234c2f5930fbf5"]}, {"id": "X07", "niveau": "expert", "ecran": "prompts", "titre": "La cause racine", "type": "reponse", "consigne": "Quelle version du prompt superviseur était utilisée par la release v1.4.0 ?", "indice": "Ouvre une trace de la release v1.4.0 et regarde le prompt lié à la generation routage, ou la métadonnée prompt_superviseur.", "pourquoi": "Une release peut embarquer la mauvaise version de prompt sans aucune modification du code : le lien prompt-trace est la seule preuve.", "enjeux": ["Qualité"], "route": "prompts/superviseur", "hashes": ["5174c5b2e16c717d3b8c81622c70104b92c8cdbcbae4e4c24441ed464618e9e3", "82e45c6bcd9c0a168cbf8f6b509e7c81085af7a82b9fafd96056be364bb0abb8", "d26d2b1cb7ffba1f6b975136ff0c0e6c4ec107fa365cc90b7a334ce6619077d7"]}, {"id": "X08", "niveau": "expert", "ecran": "prompts", "titre": "Le correctif", "type": "reponse", "consigne": "Compare les versions 2 et 3 du prompt superviseur. Quel mot la v3 demande-t-elle de répondre quand la réponse est déjà rédigée ?", "indice": "Utilise la vue de comparaison (diff) entre deux versions.", "pourquoi": "Une condition d'arrêt explicite, côté prompt ET côté graphe (arête vers END), est la vraie correction d'une boucle. recursion_limit n'est qu'un filet de sécurité.", "enjeux": ["Fiabilité"], "route": "prompts/superviseur", "hashes": ["1aa3ceaa9671e878bc9b4bf6828808d8e22bdaa5eef284ea0124b31b27496161"]}, {"id": "X09", "niveau": "expert", "ecran": "datasets", "titre": "Le meilleur run", "type": "reponse", "consigne": "Dans le dataset helpdesk-eval, quel run a le meilleur taux de routage correct ?", "indice": "Compare les runs : score moyen routage_correct, ou évaluation de run taux_routage.", "pourquoi": "On ne change pas de modèle ou de prompt sur une impression : on compare sur le même jeu de cas, avec les mêmes évaluateurs.", "enjeux": ["Qualité"], "route": "datasets", "hashes": ["4c2c90adcbebbeaa1bdf3fb225015dda6883f7f44230746d5592d760f8f096cf", "5ddf2f614747833466fdda7e525bf47df61fcff11f6670d5c83c63de26cdd2e9", "dad003df9bebf473ca0dd8a1c6cd4d1ff372e3c65112cbfa4fbf71e91497e6c2"]}, {"id": "X10", "niveau": "expert", "ecran": "datasets", "titre": "Le cas qui disqualifie", "type": "reponse", "consigne": "Le run granite-3b-superviseur-v3 laisse passer une demande qui aurait dû être refusée. Quel est l'identifiant du cas (Cxx) ?", "indice": "Compare les runs cas par cas et cherche routage_correct = 0 sur une demande attendue en refus.", "pourquoi": "Une moyenne correcte peut cacher une erreur rédhibitoire : un modèle qui ne refuse pas une injection ne passe pas en production, même s'il est 2 fois plus rapide.", "enjeux": ["NIS2", "AI Act"], "route": "datasets", "hashes": ["5e316f7eb80f5b23f4071294dbe8b2316e2b92b9cc141347b8d38b3ab1c496d0"]}, {"id": "X11", "niveau": "expert", "ecran": "dashboards", "titre": "Ton propre dashboard", "type": "action", "consigne": "Crée un dashboard « Qualité helpdesk » avec 3 widgets : pertinence moyenne par release, coût total par modèle, nombre de traces par niveau d'erreur.", "indice": "Dashboards > nouveau dashboard > ajouter un widget, puis choisir la vue, la métrique et la dimension.", "pourquoi": "Un dashboard construit autour de tes décisions (qualité, coût, incidents) vaut mieux que dix graphiques génériques.", "enjeux": ["Qualité", "FinOps"], "route": "dashboards", "hashes": []}]};
+
+/* ---------- Stockage local (facultatif, peut être indisponible) ---------- */
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* mode privé */ } }
+};
+const CLE = "lfx-progression-v1";
+let prog = store.get(CLE, {});
+let base = store.get("lfx-base-url", "http://localhost:3100");
+
+/* ---------- SHA-256 (repli pur JS si crypto.subtle est indisponible en file://) ---------- */
+function sha256js(str) {
+  const K = [0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
+  const bytes = new TextEncoder().encode(str);
+  const l = bytes.length, nb = ((l + 9 + 63) >> 6) << 6, m = new Uint8Array(nb);
+  m.set(bytes); m[l] = 0x80;
+  const dv = new DataView(m.buffer); dv.setUint32(nb - 4, l * 8); dv.setUint32(nb - 8, Math.floor(l / 0x20000000));
+  let h = [0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+  const w = new Uint32Array(64), r = (x, n) => (x >>> n) | (x << (32 - n));
+  for (let o = 0; o < nb; o += 64) {
+    for (let i = 0; i < 16; i++) w[i] = dv.getUint32(o + i * 4);
+    for (let i = 16; i < 64; i++) {
+      const s0 = r(w[i-15],7) ^ r(w[i-15],18) ^ (w[i-15] >>> 3), s1 = r(w[i-2],17) ^ r(w[i-2],19) ^ (w[i-2] >>> 10);
+      w[i] = (w[i-16] + s0 + w[i-7] + s1) >>> 0;
+    }
+    let [a,b,c,d,e,f,g,hh] = h;
+    for (let i = 0; i < 64; i++) {
+      const t1 = (hh + (r(e,6) ^ r(e,11) ^ r(e,25)) + ((e & f) ^ (~e & g)) + K[i] + w[i]) >>> 0;
+      const t2 = ((r(a,2) ^ r(a,13) ^ r(a,22)) + ((a & b) ^ (a & c) ^ (b & c))) >>> 0;
+      hh = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0;
+    }
+    h = h.map((v, i) => (v + [a,b,c,d,e,f,g,hh][i]) >>> 0);
+  }
+  return h.map(v => v.toString(16).padStart(8, "0")).join("");
+}
+async function sha256(str) {
+  try {
+    if (window.crypto && crypto.subtle && window.isSecureContext) {
+      const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
+      return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
+    }
+  } catch (e) { /* repli */ }
+  return sha256js(str);
+}
+const normaliser = s => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
+/* ---------- Utilitaires ---------- */
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const url = route => `${base.replace(/\/+$/, "")}/project/${DATA.projet}/${route}`.replace(/\/$/, "");
+const ecranDe = id => DATA.ecrans[id];
+const reussie = m => prog[m.id] && prog[m.id].ok;
+
+/* ---------- Rail ---------- */
+function rendreRail() {
+  const el = $("#rail-ecrans");
+  el.innerHTML = DATA.groupes.map(g =>
+    (g.nom ? `<div class="groupe">${esc(g.nom)}</div>` : "") +
+    g.ecrans.map(id => `<a href="#ecran-${id}" data-ecran="${id}">${esc(ecranDe(id).libelle)}</a>`).join("")
+  ).join("");
+}
+
+/* ---------- Écrans ---------- */
+function rendreEcrans() {
+  const groupeDe = id => (DATA.groupes.find(g => g.ecrans.includes(id)) || {}).nom || "";
+  $("#ecrans").innerHTML = DATA.groupes.flatMap(g => g.ecrans).map(id => {
+    const e = ecranDe(id);
+    const missions = DATA.missions.filter(m => m.ecran === id);
+    const chemin = e.route_exemple || e.route;
+    return `<article class="ecran" id="ecran-${id}">
+      <header><h3>${esc(e.libelle)}</h3><span class="groupe-nom">${esc(groupeDe(id))}</span>
+        <a class="bouton" target="_blank" rel="noopener" data-route="${esc(chemin)}" href="${esc(url(chemin))}">Ouvrir dans Langfuse</a></header>
+      <figure class="cadre" style="margin:0">
+        <div class="barre"><i></i><i></i><i></i><code data-route-texte="${esc(chemin)}">${esc(url(chemin))}</code></div>
+        <img src="screens/${id}.png" alt="Capture de l'écran ${esc(e.libelle)} de Langfuse" loading="lazy" data-ecran="${id}">
+      </figure>
+      <div>
+        <p class="role">${esc(e.role)}</p>
+        <h4>Ce qu'il faut regarder</h4><ul>${e.regarder.map(x => `<li>${esc(x)}</li>`).join("")}</ul>
+        <h4>Les questions auxquelles il répond</h4><ul>${e.questions.map(x => `<li>${esc(x)}</li>`).join("")}</ul>
+        <div class="piege"><b>Piège :</b> ${esc(e.piege)}</div>
+        ${e.v4 ? `<div class="v4"><b>v4 :</b> ${esc(e.v4)}</div>` : ""}
+        ${missions.length ? `<div class="puces">${missions.map(m => `<a class="puce${reussie(m) ? " ok" : ""}" href="#m-${m.id}" data-niveau="${m.niveau}">${m.id} · ${esc(m.titre)}</a>`).join("")}</div>` : ""}
+      </div>
+    </article>`;
+  }).join("");
+  document.querySelectorAll(".cadre img").forEach(img => {
+    img.addEventListener("error", () => {
+      const e = ecranDe(img.dataset.ecran);
+      const div = document.createElement("div");
+      div.className = "schema";
+      div.innerHTML = `<div class="s-rail">${"<span></span>".repeat(3)}<span class="on"></span>${"<span></span>".repeat(6)}</div>
+        <div class="s-main"><span style="width:40%"></span><span></span><span></span><span style="width:85%"></span><span></span><span style="width:70%"></span>
+        <em>Capture « ${esc(e.libelle)} » pas encore générée : lancer tools/capture_screens.py après le seed.</em></div>`;
+      img.replaceWith(div);
+    }, { once: true });
+    img.addEventListener("click", () => { const d = $("#visionneuse"); d.querySelector("img").src = img.src; d.querySelector("img").alt = img.alt; d.showModal(); });
+  });
+}
+$("#visionneuse").addEventListener("click", e => e.currentTarget.close());
+
+/* ---------- Par question ---------- */
+function rendreQuestions(filtre = "") {
+  const f = normaliser(filtre);
+  const items = [];
+  DATA.groupes.flatMap(g => g.ecrans).forEach(id => ecranDe(id).questions.forEach(q => items.push({ q, cible: `#ecran-${id}`, ou: ecranDe(id).libelle })));
+  if (f) DATA.missions.forEach(m => items.push({ q: m.consigne, cible: `#m-${m.id}`, ou: `Mission ${m.id} · ${m.titre}`, niveau: m.niveau, extra: (m.enjeux || []).join(" ") }));
+  const liste = items.filter(i => !f || normaliser(i.q + i.ou + (i.extra || "")).includes(f));
+  $("#questions").innerHTML = liste.length
+    ? liste.map(i => `<a href="${i.cible}"${i.niveau ? ` data-niveau="${i.niveau}"` : ""}>${esc(i.q)}<span>${esc(i.ou)}</span></a>`).join("")
+    : `<p>Aucun résultat pour « ${esc(filtre)} ». Essaie un mot plus court : coût, session, erreur, prompt.</p>`;
+}
+$("#recherche").addEventListener("input", e => rendreQuestions(e.target.value));
+
+/* ---------- Missions ---------- */
+let niveauActif = store.get("lfx-niveau", DATA.niveaux[0].id);
+function rendreOnglets() {
+  $("#onglets").innerHTML = DATA.niveaux.map(n => {
+    const ms = DATA.missions.filter(m => m.niveau === n.id);
+    return `<button role="tab" type="button" aria-selected="${n.id === niveauActif}" data-niveau="${n.id}">${esc(n.nom)}<span class="c">${ms.filter(reussie).length}/${ms.length}</span></button>`;
+  }).join("");
+  $("#niveau-desc").textContent = DATA.niveaux.find(n => n.id === niveauActif).description;
+}
+$("#onglets").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  niveauActif = b.dataset.niveau; store.set("lfx-niveau", niveauActif); rendreMissions();
+});
+function lienMission(m) {
+  if (!m.route) return "";
+  return `<a target="_blank" rel="noopener" data-route="${esc(m.route)}" href="${esc(url(m.route))}">Ouvrir dans Langfuse</a>`;
+}
+function rendreMissions() {
+  rendreOnglets();
+  $("#liste-missions").innerHTML = DATA.missions.filter(m => m.niveau === niveauActif).map(m => {
+    const ok = reussie(m);
+    const e = ecranDe(m.ecran);
+    const champ = m.type === "action"
+      ? `<label class="coche"><input type="checkbox" data-action="${m.id}"${ok ? " checked" : ""}> C'est fait</label>`
+      : `<form class="repondre" data-mission="${m.id}"><input name="r" autocomplete="off" aria-label="Réponse à la mission ${m.id}" placeholder="Ta réponse" value="${ok ? esc(prog[m.id].r || "") : ""}"><button type="submit">Vérifier</button></form>
+         <div class="retour${ok ? " ok" : ""}" id="retour-${m.id}" role="status">${ok ? "Bonne réponse." : ""}</div>`;
+    return `<article class="mission${ok ? " reussie" : ""}" id="m-${m.id}">
+      <div class="tete"><span class="id">${m.id}</span><h3>${esc(m.titre)}</h3>${ok ? `<span class="etat">Réussie</span>` : ""}</div>
+      <div class="enjeux"><a class="puce" href="#ecran-${m.ecran}">${esc(e.libelle)}</a>${(m.enjeux || []).map(x => `<span class="enjeu" data-e="${esc(x)}">${esc(x)}</span>`).join("")}</div>
+      <p>${esc(m.consigne)}</p>
+      ${champ}
+      <details><summary>Indice</summary><p>${esc(m.indice)}</p></details>
+      <div class="pourquoi" ${ok || m.type === "action" ? "" : "hidden"} id="pq-${m.id}"><b>Pourquoi c'est important :</b> ${esc(m.pourquoi)}</div>
+      <div class="pied">${lienMission(m)}</div>
+    </article>`;
+  }).join("");
+  majProgression();
+}
+$("#liste-missions").addEventListener("submit", async e => {
+  e.preventDefault();
+  const form = e.target, id = form.dataset.mission, m = DATA.missions.find(x => x.id === id);
+  const saisie = form.r.value.trim();
+  if (!saisie) { $(`#retour-${id}`).textContent = "Saisis une réponse avant de vérifier."; return; }
+  const h = await sha256("lfx|" + normaliser(saisie));
+  const retour = $(`#retour-${id}`);
+  if (m.hashes.includes(h)) {
+    prog[id] = { ok: true, r: saisie, t: new Date().toISOString() }; store.set(CLE, prog);
+    retour.className = "retour ok"; retour.textContent = "Bonne réponse.";
+    form.r.setAttribute("aria-invalid", "false");
+    const art = $(`#m-${id}`); art.classList.add("reussie"); $(`#pq-${id}`).hidden = false;
+    majProgression(); rendreOnglets(); majPuces();
+  } else {
+    prog[id] = Object.assign({}, prog[id], { essais: ((prog[id] || {}).essais || 0) + 1 }); store.set(CLE, prog);
+    retour.className = "retour ko";
+    retour.textContent = prog[id].essais >= 2 ? "Pas encore. Ouvre l'indice : il indique où regarder." : "Pas encore. Vérifie la période (7 jours) et les filtres actifs.";
+    form.r.setAttribute("aria-invalid", "true");
+  }
+});
+$("#liste-missions").addEventListener("change", e => {
+  const id = e.target.dataset.action; if (!id) return;
+  prog[id] = e.target.checked ? { ok: true, t: new Date().toISOString() } : {}; store.set(CLE, prog);
+  $(`#m-${id}`).classList.toggle("reussie", e.target.checked);
+  majProgression(); rendreOnglets(); majPuces();
+});
+function majPuces() {
+  document.querySelectorAll(".ecran .puce").forEach(p => { const id = p.getAttribute("href").slice(3); const m = DATA.missions.find(x => x.id === id); p.classList.toggle("ok", !!(m && reussie(m))); });
+}
+function majProgression() {
+  const n = DATA.missions.filter(reussie).length, t = DATA.missions.length;
+  $("#jauge").style.width = `${(100 * n / t).toFixed(1)}%`;
+  $("#jauge-role").setAttribute("aria-valuemax", t); $("#jauge-role").setAttribute("aria-valuenow", n);
+  $("#jauge-texte").textContent = `${n} / ${t} missions`;
+  const c = $("#rail-compte"); c.textContent = `${n}/${t}`; c.classList.toggle("fini", n === t);
+}
+/* Un lien vers une mission d'un autre niveau bascule l'onglet */
+document.addEventListener("click", e => {
+  const a = e.target.closest('a[href^="#m-"]'); if (!a) return;
+  const m = DATA.missions.find(x => x.id === a.getAttribute("href").slice(3));
+  if (m && m.niveau !== niveauActif) { niveauActif = m.niveau; store.set("lfx-niveau", niveauActif); rendreMissions(); }
+});
+
+/* ---------- Adresse de Langfuse ---------- */
+function majLiens() {
+  document.querySelectorAll("[data-route]").forEach(a => a.href = url(a.dataset.route));
+  document.querySelectorAll("[data-route-texte]").forEach(c => c.textContent = url(c.dataset.routeTexte));
+  $("#lien-ui").href = base;
+}
+const champ = $("#base-url");
+champ.value = base;
+champ.addEventListener("change", () => { base = champ.value.trim() || "http://localhost:3100"; store.set("lfx-base-url", base); majLiens(); });
+
+/* ---------- Export ---------- */
+$("#exporter").addEventListener("click", () => {
+  const resume = { kit: "langfuse-explorer", version_langfuse: DATA.version, exporte_le: new Date().toISOString(),
+    reussies: DATA.missions.filter(reussie).map(m => m.id), total: DATA.missions.length, detail: prog };
+  const blob = new Blob([JSON.stringify(resume, null, 2)], { type: "application/json" });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "langfuse-explorer-progression.json"; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+});
+
+/* ---------- Thème ---------- */
+const themeSauve = store.get("lfx-theme", null);
+if (themeSauve) document.documentElement.dataset.theme = themeSauve;
+$("#theme").addEventListener("click", () => {
+  const sombre = document.documentElement.dataset.theme ? document.documentElement.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+  document.documentElement.dataset.theme = sombre ? "light" : "dark"; store.set("lfx-theme", document.documentElement.dataset.theme);
+});
+
+/* ---------- Rail actif au défilement ---------- */
+const obs = new IntersectionObserver(entries => entries.forEach(en => {
+  if (!en.isIntersecting) return;
+  document.querySelectorAll(".rail a").forEach(a => a.classList.toggle("actif", a.getAttribute("href") === `#${en.target.id}`));
+}), { rootMargin: "-30% 0px -60% 0px" });
+
+rendreRail(); rendreEcrans(); rendreQuestions(); rendreMissions(); majLiens();
+document.querySelectorAll("section.bloc, article.ecran").forEach(s => obs.observe(s));
+</script>
+</body>
+</html>

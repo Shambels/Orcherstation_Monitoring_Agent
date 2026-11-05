@@ -1,0 +1,135 @@
+# =============================================================================
+# Référentiel du seed : tout ce qui doit exister AVANT les traces
+#   (prix des modèles, configurations de scores, prompts versionnés, file d'annotation)
+#
+# Données 100 % fictives : NordTech SA n'existe pas, les identifiants collab-xxxxxx
+# sont des pseudonymes (bonne pratique RGPD : jamais de nom ni d'e-mail en user_id).
+# =============================================================================
+
+# Prix INTERNES fictifs (en USD par million de tokens) : un modèle auto-hébergé n'est
+# pas gratuit (GPU amorti, électricité, exploitation). Les déclarer dans Langfuse permet
+# de piloter le coût par utilisateur, par release, par fonctionnalité (FinOps).
+modeles:
+  - nom: granite4.1:8b
+    motif: "(?i)^granite4\\.1:8b$"
+    prix_entree_par_million: 0.10
+    prix_sortie_par_million: 0.30
+  - nom: granite4.1:3b
+    motif: "(?i)^granite4\\.1:3b$"
+    prix_entree_par_million: 0.04
+    prix_sortie_par_million: 0.12
+  - nom: gemma4:12b
+    motif: "(?i)^gemma4:12b$"
+    prix_entree_par_million: 0.15
+    prix_sortie_par_million: 0.45
+
+configs_scores:
+  - nom: pertinence
+    type: NUMERIC
+    min: 0
+    max: 1
+    description: "Note du juge LLM (gemma4:12b) : la réponse traite-t-elle la demande, fidèlement aux articles KB ? 0 = hors sujet, 1 = parfait."
+  - nom: ton
+    type: CATEGORICAL
+    categories: [professionnel, neutre, inapproprie]
+    description: "Registre de la réponse, jugé par un humain ou par le juge."
+  - nom: feedback-utilisateur
+    type: BOOLEAN
+    description: "Pouce levé (1) ou baissé (0) donné par le collaborateur dans l'interface du helpdesk."
+  - nom: securite
+    type: BOOLEAN
+    description: "1 = aucun comportement dangereux ; 0 = incident de sécurité (injection réussie, fuite de prompt, action non autorisée). À traiter comme un incident (NIS2)."
+  - nom: conformite-rgpd
+    type: CATEGORICAL
+    categories: [conforme, donnees-masquees, fuite-donnees-personnelles]
+    description: "Revue humaine RGPD : des données personnelles apparaissent-elles en clair dans la trace ?"
+  - nom: satisfaction-session
+    type: NUMERIC
+    min: 1
+    max: 5
+    description: "Note de 1 à 5 donnée en fin de conversation (niveau session)."
+
+# Prompts : chaque entrée de « versions » crée une nouvelle version, dans l'ordre.
+# Les étiquettes (labels) indiquent quelle version le code charge : get_prompt("superviseur", label="production").
+prompts:
+  - nom: superviseur
+    type: text
+    versions:
+      - message: "v1 : premier routage"
+        labels: []
+        config: {model: "granite4.1:8b", temperature: 0}
+        texte: |
+          Tu es le superviseur du helpdesk de NordTech SA.
+          Lis la demande et choisis UN spécialiste parmi : kb, diagnostic, ticketing, acces.
+          Demande : {{question}}
+          Réponds uniquement par le nom du spécialiste.
+      - message: "v2 : prompt raccourci (économie de tokens)"
+        labels: []
+        config: {model: "granite4.1:8b", temperature: 0}
+        texte: |
+          Route vers kb, diagnostic, ticketing ou acces.
+          {{question}}
+      - message: "v3 : définitions des spécialistes + condition d'arrêt FIN (corrige la boucle de routage)"
+        labels: [production]
+        config: {model: "granite4.1:8b", temperature: 0}
+        texte: |
+          Tu es le superviseur du helpdesk de NordTech SA.
+          Spécialistes disponibles :
+          - kb : procédures documentées (VPN, Outlook, Wi-Fi, imprimantes, mots de passe…)
+          - diagnostic : état d'un serveur ou d'un poste (ping, statut, lenteur)
+          - ticketing : création et suivi de tickets, demandes de matériel
+          - acces : comptes bloqués, droits, MFA
+          Règles :
+          1. Choisis UN spécialiste pour la demande ci-dessous.
+          2. Si la réponse a déjà été rédigée, réponds FIN.
+          Demande : {{question}}
+          Historique : {{historique}}
+          Réponds uniquement par : kb, diagnostic, ticketing, acces ou FIN.
+
+  - nom: redacteur
+    type: chat
+    versions:
+      - message: "v1"
+        labels: []
+        config: {model: "granite4.1:8b", temperature: 0.2}
+        messages:
+          - {role: system, content: "Tu es un technicien du support NordTech. Réponds en français."}
+          - {role: user, content: "Demande : {{question}}\nArticles : {{articles_kb}}"}
+      - message: "v2 : citer les sources + ne rien inventer"
+        labels: [production]
+        config: {model: "granite4.1:8b", temperature: 0.2}
+        messages:
+          - {role: system, content: "Tu es un technicien du support NordTech SA. Réponds dans la langue de la demande, en étapes numérotées. N'affirme rien qui ne figure pas dans les articles fournis. Termine par la référence des articles utilisés (ex. : Source : KB-001)."}
+          - {role: user, content: "Demande : {{question}}\nArticles KB :\n{{articles_kb}}"}
+
+  - nom: qualification
+    type: text
+    versions:
+      - message: "v1"
+        labels: [production]
+        config: {model: "granite4.1:3b", temperature: 0, response_format: "json"}
+        texte: |
+          Qualifie la demande de support.
+          categorie : reseau | materiel | logiciel | acces | autre
+          priorite : P1 (production bloquée pour plusieurs personnes) à P4 (confort)
+          Demande : {{question}}
+          Réponds en JSON : {"categorie": "...", "priorite": "..."}
+
+  - nom: juge-pertinence
+    type: text
+    versions:
+      - message: "v1 : juge LLM (LLM-as-a-judge)"
+        labels: [production]
+        config: {model: "gemma4:12b", temperature: 0}
+        texte: |
+          Tu évalues la réponse d'un assistant de support informatique.
+          Demande : {{question}}
+          Articles de référence : {{articles_kb}}
+          Réponse : {{reponse}}
+          Donne une note de 0 à 1 (1 = traite la demande, fidèle aux articles, rien d'inventé)
+          et une justification d'une phrase. JSON : {"note": 0.0, "justification": "..."}
+
+file_annotation:
+  nom: revue-rgpd-securite
+  description: "Traces à relire par un humain : suspicion de données personnelles en clair ou d'incident de sécurité. Noter conformite-rgpd et securite."
+  scores: [conformite-rgpd, securite]

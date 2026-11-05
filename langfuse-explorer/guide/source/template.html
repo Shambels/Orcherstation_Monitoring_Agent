@@ -1,0 +1,549 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Langfuse Explorer</title>
+<meta name="description" content="Guide d'exploration autonome de l'interface Langfuse v4 : carte des écrans, questions de diagnostic et missions vérifiées.">
+<style>
+:root {
+  --violet: #3B2A80;
+  --violet-profond: #261A5A;
+  --violet-clair: #6E5CC7;
+  --vert: #23AC67;
+  --vert-texte: #157A47;
+  --encre: #1D1838;
+  --encre-douce: #4A4566;
+  --papier: #F5F6FA;
+  --surface: #FFFFFF;
+  --lavande: #ECE9F7;
+  --trait: #D9D5EA;
+  --ambre: #A8620A;
+  --ambre-fond: #FCF1DF;
+  --erreur: #B3361F;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+  --sans: Arial, "Helvetica Neue", Helvetica, sans-serif;
+  --rail: 272px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --violet: #8C7BE6; --violet-profond: #17122F; --violet-clair: #A99BF0;
+    --vert: #3CCB82; --vert-texte: #4FD893; --encre: #ECEAF6; --encre-douce: #B6B1D0;
+    --papier: #120F24; --surface: #1C1736; --lavande: #251F45; --trait: #352E5E;
+    --ambre: #F0B35A; --ambre-fond: #33260F; --erreur: #FF8A73; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --violet: #8C7BE6; --violet-profond: #17122F; --violet-clair: #A99BF0;
+  --vert: #3CCB82; --vert-texte: #4FD893; --encre: #ECEAF6; --encre-douce: #B6B1D0;
+  --papier: #120F24; --surface: #1C1736; --lavande: #251F45; --trait: #352E5E;
+  --ambre: #F0B35A; --ambre-fond: #33260F; --erreur: #FF8A73; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 80px; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } * { transition: none !important; } }
+body { margin: 0; background: var(--papier); color: var(--encre); font: 16px/1.55 var(--sans); }
+a { color: var(--violet); }
+code, .id { font-family: var(--mono); font-size: .88em; }
+:focus-visible { outline: 3px solid var(--vert); outline-offset: 2px; border-radius: 4px; }
+
+/* ---------- Rail : réplique de la barre latérale Langfuse ---------- */
+.rail {
+  position: fixed; inset: 0 auto 0 0; width: var(--rail); overflow-y: auto;
+  background: var(--violet-profond); color: #E9E5FA; padding: 20px 14px 28px;
+}
+:root:not([data-theme="dark"]) .rail { background: #261A5A; }
+.marque { display: flex; align-items: center; gap: 10px; padding: 0 8px 18px; border-bottom: 1px solid rgba(255,255,255,.12); }
+.marque svg { flex: none; }
+.marque b { display: block; font-size: 17px; letter-spacing: -.01em; }
+.marque small { color: #B9B0E6; font-size: 12.5px; }
+.rail h2 { font-size: 12.5px; font-weight: 700; color: #B9B0E6; margin: 20px 8px 6px; letter-spacing: .01em; }
+.rail a { display: flex; justify-content: space-between; align-items: center; gap: 8px; color: #F1EEFF; text-decoration: none;
+  padding: 6px 10px; border-radius: 6px; font-size: 14.5px; }
+.rail a:hover { background: rgba(255,255,255,.08); }
+.rail a.actif { background: rgba(35,172,103,.22); box-shadow: inset 3px 0 0 #23AC67; }
+.rail .groupe { font-size: 12px; color: #9C92D4; margin: 10px 10px 2px; }
+.rail .compte { font-size: 12px; color: #B9B0E6; font-variant-numeric: tabular-nums; }
+.rail .compte.fini { color: #5BE39C; }
+.rail .note { font-size: 12px; color: #9C92D4; padding: 14px 10px 0; line-height: 1.45; }
+
+/* ---------- Bandeau ---------- */
+.bandeau { position: sticky; top: 0; z-index: 5; margin-left: var(--rail); background: color-mix(in srgb, var(--papier) 92%, transparent);
+  backdrop-filter: blur(6px); border-bottom: 1px solid var(--trait); padding: 10px 32px; display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
+.progression { display: flex; align-items: center; gap: 10px; flex: 1 1 260px; min-width: 220px; }
+.jauge { flex: 1; height: 10px; background: var(--lavande); border-radius: 99px; overflow: hidden; }
+.jauge i { display: block; height: 100%; width: 0; background: var(--vert); border-radius: 99px; transition: width .5s ease; }
+.progression span { font-variant-numeric: tabular-nums; font-size: 14px; color: var(--encre-douce); white-space: nowrap; }
+.reglage { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--encre-douce); }
+.reglage input { font: 14px var(--mono); padding: 5px 8px; border: 1px solid var(--trait); border-radius: 6px; background: var(--surface); color: var(--encre); width: 210px; }
+button, .bouton { font: 600 14px var(--sans); border-radius: 7px; border: 1px solid var(--violet); background: var(--violet); color: #fff;
+  padding: 7px 13px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+button.discret, .bouton.discret { background: transparent; color: var(--violet); }
+button:hover, .bouton:hover { filter: brightness(1.08); }
+
+/* ---------- Contenu ---------- */
+main { margin-left: var(--rail); padding: 8px 32px 80px; }
+.colonne { max-width: 1060px; }
+section.bloc { padding: 44px 0 8px; }
+h1 { font-size: clamp(34px, 5vw, 56px); line-height: 1.02; letter-spacing: -.03em; margin: 28px 0 14px; font-weight: 800; }
+h1 .ligne2 { display: block; color: var(--violet); }
+.chapeau { font-size: 19px; color: var(--encre-douce); max-width: 64ch; margin: 0 0 28px; }
+h2.titre { font-size: 30px; letter-spacing: -.02em; margin: 0 0 6px; }
+.sous { color: var(--encre-douce); margin: 0 0 22px; max-width: 70ch; }
+
+/* Démarrage : trois commandes en séquence */
+.etapes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; border: 1px solid var(--trait); border-radius: 12px; overflow: hidden; background: var(--surface); }
+.etapes > div { padding: 18px 20px; border-right: 1px solid var(--trait); }
+.etapes > div:last-child { border-right: 0; }
+.etapes .n { font: 800 28px var(--sans); color: var(--vert); line-height: 1; }
+.etapes h3 { margin: 8px 0 6px; font-size: 16px; }
+.etapes pre { margin: 8px 0 0; background: var(--lavande); padding: 8px 10px; border-radius: 6px; overflow-x: auto; font: 13px/1.5 var(--mono); }
+.etapes p { margin: 0; font-size: 14.5px; color: var(--encre-douce); }
+.encart { margin-top: 18px; display: flex; gap: 14px; padding: 14px 18px; border-radius: 10px; background: var(--ambre-fond); color: var(--encre); font-size: 15px; }
+.encart b { color: var(--ambre); }
+
+/* Fiche écran */
+.ecran { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 28px; padding: 30px 0; border-top: 1px solid var(--trait); }
+.ecran:first-of-type { border-top: 0; }
+.ecran header { grid-column: 1 / -1; display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+.ecran h3 { font-size: 24px; margin: 0; letter-spacing: -.015em; }
+.ecran .groupe-nom { color: var(--encre-douce); font-size: 14px; }
+.ecran header .bouton { margin-left: auto; }
+.cadre { border: 1px solid var(--trait); border-radius: 10px; overflow: hidden; background: var(--surface); align-self: start; }
+.cadre .barre { display: flex; gap: 6px; align-items: center; padding: 7px 10px; background: var(--lavande); border-bottom: 1px solid var(--trait); }
+.cadre .barre i { width: 9px; height: 9px; border-radius: 50%; background: var(--trait); }
+.cadre .barre code { margin-left: 8px; color: var(--encre-douce); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cadre img { display: block; width: 100%; height: auto; cursor: zoom-in; }
+.schema { aspect-ratio: 16 / 10; display: grid; grid-template-columns: 22% 1fr; }
+.schema .s-rail { background: var(--lavande); padding: 10px 8px; display: flex; flex-direction: column; gap: 6px; }
+.schema .s-rail span { height: 7px; border-radius: 4px; background: var(--trait); }
+.schema .s-rail span.on { background: var(--vert); }
+.schema .s-main { padding: 14px; display: flex; flex-direction: column; gap: 9px; }
+.schema .s-main span { height: 9px; border-radius: 4px; background: var(--lavande); }
+.schema .s-main em { margin-top: auto; font-style: normal; font-size: 12.5px; color: var(--encre-douce); }
+.ecran .role { font-size: 17px; margin: 0 0 12px; }
+.ecran h4 { font-size: 14px; margin: 16px 0 6px; color: var(--violet); }
+.ecran ul { margin: 0; padding-left: 18px; }
+.ecran li { margin: 3px 0; font-size: 15px; }
+.piege { margin-top: 14px; padding: 10px 14px; border-left: 3px solid var(--ambre); background: var(--ambre-fond); font-size: 14.5px; border-radius: 0 8px 8px 0; }
+.v4 { margin-top: 10px; padding: 10px 14px; border-left: 3px solid var(--violet-clair); background: var(--lavande); font-size: 14.5px; border-radius: 0 8px 8px 0; }
+.puces { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.puce { font: 600 12.5px var(--sans); padding: 3px 9px; border-radius: 99px; border: 1px solid var(--trait); background: var(--surface); color: var(--encre); text-decoration: none; cursor: pointer; }
+.puce.ok { border-color: var(--vert); color: var(--vert-texte); }
+
+/* Par question */
+.recherche { width: 100%; max-width: 560px; font: 16px var(--sans); padding: 11px 14px; border-radius: 9px; border: 1px solid var(--trait); background: var(--surface); color: var(--encre); margin-bottom: 18px; }
+.questions { columns: 2 300px; column-gap: 28px; }
+.questions a { display: block; break-inside: avoid; padding: 9px 0; border-bottom: 1px solid var(--trait); text-decoration: none; color: var(--encre); }
+.questions a span { display: block; font-size: 13px; color: var(--violet); }
+.questions a:hover { color: var(--violet); }
+
+/* Missions */
+.onglets { display: flex; gap: 6px; border-bottom: 1px solid var(--trait); margin-bottom: 18px; flex-wrap: wrap; }
+.onglets button { background: transparent; color: var(--encre-douce); border: 0; border-bottom: 3px solid transparent; border-radius: 0; padding: 10px 12px; }
+.onglets button[aria-selected="true"] { color: var(--violet); border-bottom-color: var(--violet); }
+.onglets .c { font-weight: 400; font-variant-numeric: tabular-nums; margin-left: 6px; }
+.niveau-desc { color: var(--encre-douce); margin: -6px 0 16px; }
+.missions { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(330px, 100%), 1fr)); gap: 14px; }
+.mission { background: var(--surface); border: 1px solid var(--trait); border-radius: 12px; padding: 16px 18px; display: flex; flex-direction: column; gap: 9px; }
+.mission.reussie { border-color: var(--vert); box-shadow: inset 4px 0 0 var(--vert); }
+.mission .tete { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mission .id { color: var(--encre-douce); }
+.mission h3 { font-size: 17px; margin: 0; flex: 1 1 auto; }
+.mission .etat { font: 700 12.5px var(--sans); color: var(--vert-texte); }
+.mission p { margin: 0; font-size: 15px; }
+.enjeux { display: flex; gap: 5px; flex-wrap: wrap; }
+.enjeu { font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 4px; background: var(--lavande); color: var(--violet); }
+.enjeu[data-e="RGPD"] { background: #E6E0FF; color: #3B2A80; }
+.enjeu[data-e="NIS2"] { background: var(--ambre-fond); color: var(--ambre); }
+.enjeu[data-e="AI Act"] { background: #DDF3EC; color: #0F6B4B; }
+.enjeu[data-e="FinOps"] { background: #E2F6EA; color: var(--vert-texte); }
+:root[data-theme="dark"] .enjeu[data-e="RGPD"], :root[data-theme="dark"] .enjeu[data-e="AI Act"], :root[data-theme="dark"] .enjeu[data-e="FinOps"] { background: var(--lavande); color: var(--encre); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .enjeu[data-e="RGPD"], :root:not([data-theme="light"]) .enjeu[data-e="AI Act"], :root:not([data-theme="light"]) .enjeu[data-e="FinOps"] { background: var(--lavande); color: var(--encre); } }
+.repondre { display: flex; gap: 8px; }
+.repondre input { flex: 1; min-width: 0; font: 15px var(--sans); padding: 8px 10px; border-radius: 7px; border: 1px solid var(--trait); background: var(--papier); color: var(--encre); }
+.repondre input[aria-invalid="true"] { border-color: var(--erreur); }
+.retour { font-size: 14px; min-height: 1.2em; }
+.retour.ko { color: var(--erreur); }
+.retour.ok { color: var(--vert-texte); font-weight: 700; }
+.mission details summary { cursor: pointer; font-size: 14px; color: var(--violet); }
+.mission details p { margin-top: 6px; font-size: 14.5px; color: var(--encre-douce); }
+.pourquoi { font-size: 14.5px; background: var(--lavande); padding: 9px 12px; border-radius: 8px; }
+.mission .pied { display: flex; gap: 10px; align-items: center; margin-top: auto; padding-top: 4px; font-size: 14px; flex-wrap: wrap; }
+.coche { display: inline-flex; gap: 8px; align-items: center; font-weight: 600; cursor: pointer; }
+.coche input { width: 18px; height: 18px; accent-color: var(--vert); }
+
+/* Tableaux v3/v4 et glossaire */
+.table-defile { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; min-width: 640px; background: var(--surface); border: 1px solid var(--trait); border-radius: 10px; overflow: hidden; font-size: 15px; }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--trait); vertical-align: top; }
+th { background: var(--lavande); font-size: 14px; }
+dl.glossaire { display: grid; grid-template-columns: max-content 1fr; gap: 8px 22px; }
+dl.glossaire dt { font-weight: 700; }
+dl.glossaire dd { margin: 0; color: var(--encre-douce); }
+footer { margin-top: 60px; padding-top: 18px; border-top: 1px solid var(--trait); font-size: 13.5px; color: var(--encre-douce); }
+
+/* Visionneuse */
+dialog { border: 0; padding: 0; background: transparent; max-width: 96vw; }
+dialog::backdrop { background: rgba(10, 6, 30, .8); }
+dialog img { max-width: 96vw; max-height: 90vh; border-radius: 8px; display: block; }
+
+/* ---------- Mobile ---------- */
+@media (max-width: 900px) {
+  .rail { position: static; width: auto; padding: 14px 16px; }
+  .rail nav { display: flex; flex-wrap: wrap; gap: 4px; }
+  .rail h2, .rail .groupe, .rail .note, .rail .ecrans-nav { display: none; }
+  .bandeau, main { margin-left: 0; padding-left: 16px; padding-right: 16px; }
+  .ecran { grid-template-columns: 1fr; }
+  .etapes { grid-template-columns: 1fr; }
+  .etapes > div { border-right: 0; border-bottom: 1px solid var(--trait); }
+  .reglage input { width: 160px; }
+  .missions { grid-template-columns: 1fr; }
+  dl.glossaire { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<aside class="rail" aria-label="Navigation du guide">
+  <div class="marque">
+    <svg width="34" height="34" viewBox="0 0 34 34" aria-hidden="true">
+      <rect width="34" height="34" rx="8" fill="#23AC67"/>
+      <path d="M9 23.5 L15 11 L19.5 19 L22 15 L25 23.5" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <div><b>Langfuse Explorer</b><small>HelpDesk-Ops · NordTech (fictif)</small></div>
+  </div>
+  <nav>
+    <h2>Le guide</h2>
+    <a href="#demarrer">Démarrer</a>
+    <a href="#par-question">Par question</a>
+    <a href="#missions">Missions <span class="compte" id="rail-compte"></span></a>
+    <a href="#v3v4">Ce qui change en v4</a>
+    <a href="#glossaire">Glossaire</a>
+    <h2>L'interface, écran par écran</h2>
+    <div class="ecrans-nav" id="rail-ecrans"></div>
+    <p class="note">Les entrées ci-dessus reprennent la barre latérale de Langfuse, dans le même ordre : en lisant le guide, tu apprends où cliquer.</p>
+  </nav>
+</aside>
+
+<div class="bandeau">
+  <div class="progression" aria-live="polite">
+    <div class="jauge" role="progressbar" aria-label="Missions réussies" aria-valuemin="0" id="jauge-role"><i id="jauge"></i></div>
+    <span id="jauge-texte"></span>
+  </div>
+  <label class="reglage">Langfuse <input id="base-url" spellcheck="false" aria-label="Adresse de Langfuse"></label>
+  <button class="discret" id="exporter" type="button">Exporter ma progression</button>
+  <button class="discret" id="theme" type="button" aria-label="Changer de thème">Thème</button>
+</div>
+
+<main><div class="colonne">
+
+<section class="bloc" id="demarrer">
+  <h1>Explore Langfuse<span class="ligne2">comme un enquêteur.</span></h1>
+  <p class="chapeau">Sept jours d'activité d'un helpdesk propulsé par des agents LangGraph : des réponses parfaites, une boucle infinie, une fuite de données personnelles, une injection réussie et une régression en production. À toi de tout retrouver dans l'interface.</p>
+  <div class="etapes">
+    <div><div class="n">1</div><h3>Lancer le kit</h3><p>Docker Desktop démarré, puis :</p><pre>.\start.ps1      # Windows
+./start.sh       # Linux, macOS</pre></div>
+    <div><div class="n">2</div><h3>Se connecter</h3><p>Ouvre <a id="lien-ui" href="#">l'interface</a> avec le compte affiché à la fin du script.</p><pre>explorer@helpdesk.local
+mot de passe : voir .env</pre></div>
+    <div><div class="n">3</div><h3>Régler la période</h3><p>Dans Tracing, choisis <b>7 jours</b>. Puis ouvre les missions, niveau Découverte.</p><pre>Tracing › période › 7 days</pre></div>
+  </div>
+  <div class="encart"><b>Aucun GPU requis.</b> <span>Le kit lance Langfuse seul et injecte des traces synthétiques réalistes : un portable avec Docker et 8 Go de RAM suffit (16 Go conseillés). Les liens « Ouvrir dans Langfuse » pointent vers l'adresse réglée en haut de page.</span></div>
+</section>
+
+<section class="bloc" id="par-question">
+  <h2 class="titre">Par question</h2>
+  <p class="sous">Tu as une question de diagnostic ? Trouve l'écran qui y répond. La recherche parcourt aussi les missions.</p>
+  <input class="recherche" id="recherche" type="search" placeholder="Rechercher : coût, erreur, session, RGPD…" aria-label="Rechercher une question ou une mission">
+  <div class="questions" id="questions"></div>
+</section>
+
+<section class="bloc" id="missions">
+  <h2 class="titre">Missions</h2>
+  <p class="sous">Les réponses sont vérifiées dans cette page, sans connexion. Ta progression est enregistrée dans ce navigateur : exporte-la pour la garder.</p>
+  <div class="onglets" role="tablist" id="onglets"></div>
+  <p class="niveau-desc" id="niveau-desc"></p>
+  <div class="missions" id="liste-missions"></div>
+</section>
+
+<section class="bloc" id="carte">
+  <h2 class="titre">L'interface, écran par écran</h2>
+  <p class="sous">Pour chaque écran : à quoi il sert, ce qu'il faut regarder, le piège classique, et les missions associées.</p>
+  <div id="ecrans"></div>
+</section>
+
+<section class="bloc" id="v3v4">
+  <h2 class="titre">Ce qui change en v4</h2>
+  <p class="sous">La plupart des tutoriels en ligne montrent encore la v3. Voici ce qui a bougé.</p>
+  <div class="table-defile"><table>
+    <thead><tr><th>Sujet</th><th>Langfuse v3</th><th>Langfuse v4 (ce kit)</th></tr></thead>
+    <tbody>
+      <tr><td>Modèle de données</td><td>Tables traces et observations séparées, reliées par jointure</td><td>Une seule table d'observations, largement immuable. Une trace est l'ensemble des observations qui partagent un trace_id.</td></tr>
+      <tr><td>Écran Tracing</td><td>Un tableau Traces et un tableau Observations</td><td>Un seul tableau, filtré par défaut sur <code>Is Root Observation = true</code> (une ligne par trace)</td></tr>
+      <tr><td>Attributs de trace</td><td>Posés une fois sur la trace</td><td>Propagés sur chaque observation (<code>propagate_attributes</code>) : sinon les agrégats par utilisateur ou par session sont incomplets</td></tr>
+      <tr><td>Ingestion</td><td>API batch <code>/api/public/ingestion</code></td><td>OpenTelemetry (<code>/api/public/otel</code>). L'API batch n'accepte plus que les scores.</td></tr>
+      <tr><td>Lecture par API</td><td><code>/traces</code>, <code>/observations</code>, <code>/sessions</code></td><td>Observations v2, Scores v3, Metrics v2. Les anciennes routes répondent 404 en mode events_only.</td></tr>
+      <tr><td>SDK</td><td>Python v2/v3, <code>LANGFUSE_HOST</code></td><td>Python v4 (≥ 4.7 pour le temps réel), <code>LANGFUSE_BASE_URL</code>. Le SDK v5 exige un serveur ≥ 4.59.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section class="bloc" id="glossaire">
+  <h2 class="titre">Glossaire</h2>
+  <dl class="glossaire">
+    <dt>Trace</dt><dd>Le traitement complet d'une requête : toutes les observations qui partagent un trace_id.</dd>
+    <dt>Observation</dt><dd>Une étape : generation (appel LLM), agent, tool, retriever, embedding, guardrail, chain, span, event.</dd>
+    <dt>Observation racine</dt><dd>L'observation sans parent. Son entrée et sa sortie sont celles de la trace.</dd>
+    <dt>Session</dt><dd>Les traces d'une même conversation, regroupées par session_id.</dd>
+    <dt>Environnement</dt><dd>Séparation des données : production, formation, sdk-experiment…</dd>
+    <dt>Release</dt><dd>Version de l'application qui a produit la trace (v1.3.0, v1.4.0…).</dd>
+    <dt>Score</dt><dd>Une évaluation : NUMERIC, BOOLEAN ou CATEGORICAL, attachée à une trace, une observation ou une session.</dd>
+    <dt>Prompt versionné</dt><dd>Un prompt stocké dans Langfuse, dont chaque modification crée une version. L'étiquette production désigne celle que charge le code.</dd>
+    <dt>Dataset, run</dt><dd>Un jeu de cas de référence, et une exécution (expérience) d'une variante sur ce jeu.</dd>
+    <dt>TTFT</dt><dd>Time to first token : délai avant le premier token généré. C'est la latence ressentie en streaming.</dd>
+  </dl>
+</section>
+
+<footer>
+  Kit Langfuse Explorer · Langfuse <b>__LANGFUSE_VERSION__</b> auto-hébergé, SDK Python __SDK_VERSION__ · guide généré le __DATE__.
+  Données entièrement fictives (NordTech SA n'existe pas). Captures : <code>tools/capture_screens.py</code>.
+</footer>
+</div></main>
+
+<dialog id="visionneuse" aria-label="Capture agrandie"><img alt=""></dialog>
+
+<script>
+const DATA = /*__DATA__*/null;
+
+/* ---------- Stockage local (facultatif, peut être indisponible) ---------- */
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* mode privé */ } }
+};
+const CLE = "lfx-progression-v1";
+let prog = store.get(CLE, {});
+let base = store.get("lfx-base-url", "http://localhost:3100");
+
+/* ---------- SHA-256 (repli pur JS si crypto.subtle est indisponible en file://) ---------- */
+function sha256js(str) {
+  const K = [0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
+  const bytes = new TextEncoder().encode(str);
+  const l = bytes.length, nb = ((l + 9 + 63) >> 6) << 6, m = new Uint8Array(nb);
+  m.set(bytes); m[l] = 0x80;
+  const dv = new DataView(m.buffer); dv.setUint32(nb - 4, l * 8); dv.setUint32(nb - 8, Math.floor(l / 0x20000000));
+  let h = [0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+  const w = new Uint32Array(64), r = (x, n) => (x >>> n) | (x << (32 - n));
+  for (let o = 0; o < nb; o += 64) {
+    for (let i = 0; i < 16; i++) w[i] = dv.getUint32(o + i * 4);
+    for (let i = 16; i < 64; i++) {
+      const s0 = r(w[i-15],7) ^ r(w[i-15],18) ^ (w[i-15] >>> 3), s1 = r(w[i-2],17) ^ r(w[i-2],19) ^ (w[i-2] >>> 10);
+      w[i] = (w[i-16] + s0 + w[i-7] + s1) >>> 0;
+    }
+    let [a,b,c,d,e,f,g,hh] = h;
+    for (let i = 0; i < 64; i++) {
+      const t1 = (hh + (r(e,6) ^ r(e,11) ^ r(e,25)) + ((e & f) ^ (~e & g)) + K[i] + w[i]) >>> 0;
+      const t2 = ((r(a,2) ^ r(a,13) ^ r(a,22)) + ((a & b) ^ (a & c) ^ (b & c))) >>> 0;
+      hh = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0;
+    }
+    h = h.map((v, i) => (v + [a,b,c,d,e,f,g,hh][i]) >>> 0);
+  }
+  return h.map(v => v.toString(16).padStart(8, "0")).join("");
+}
+async function sha256(str) {
+  try {
+    if (window.crypto && crypto.subtle && window.isSecureContext) {
+      const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
+      return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
+    }
+  } catch (e) { /* repli */ }
+  return sha256js(str);
+}
+const normaliser = s => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
+/* ---------- Utilitaires ---------- */
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const url = route => `${base.replace(/\/+$/, "")}/project/${DATA.projet}/${route}`.replace(/\/$/, "");
+const ecranDe = id => DATA.ecrans[id];
+const reussie = m => prog[m.id] && prog[m.id].ok;
+
+/* ---------- Rail ---------- */
+function rendreRail() {
+  const el = $("#rail-ecrans");
+  el.innerHTML = DATA.groupes.map(g =>
+    (g.nom ? `<div class="groupe">${esc(g.nom)}</div>` : "") +
+    g.ecrans.map(id => `<a href="#ecran-${id}" data-ecran="${id}">${esc(ecranDe(id).libelle)}</a>`).join("")
+  ).join("");
+}
+
+/* ---------- Écrans ---------- */
+function rendreEcrans() {
+  const groupeDe = id => (DATA.groupes.find(g => g.ecrans.includes(id)) || {}).nom || "";
+  $("#ecrans").innerHTML = DATA.groupes.flatMap(g => g.ecrans).map(id => {
+    const e = ecranDe(id);
+    const missions = DATA.missions.filter(m => m.ecran === id);
+    const chemin = e.route_exemple || e.route;
+    return `<article class="ecran" id="ecran-${id}">
+      <header><h3>${esc(e.libelle)}</h3><span class="groupe-nom">${esc(groupeDe(id))}</span>
+        <a class="bouton" target="_blank" rel="noopener" data-route="${esc(chemin)}" href="${esc(url(chemin))}">Ouvrir dans Langfuse</a></header>
+      <figure class="cadre" style="margin:0">
+        <div class="barre"><i></i><i></i><i></i><code data-route-texte="${esc(chemin)}">${esc(url(chemin))}</code></div>
+        <img src="screens/${id}.png" alt="Capture de l'écran ${esc(e.libelle)} de Langfuse" loading="lazy" data-ecran="${id}">
+      </figure>
+      <div>
+        <p class="role">${esc(e.role)}</p>
+        <h4>Ce qu'il faut regarder</h4><ul>${e.regarder.map(x => `<li>${esc(x)}</li>`).join("")}</ul>
+        <h4>Les questions auxquelles il répond</h4><ul>${e.questions.map(x => `<li>${esc(x)}</li>`).join("")}</ul>
+        <div class="piege"><b>Piège :</b> ${esc(e.piege)}</div>
+        ${e.v4 ? `<div class="v4"><b>v4 :</b> ${esc(e.v4)}</div>` : ""}
+        ${missions.length ? `<div class="puces">${missions.map(m => `<a class="puce${reussie(m) ? " ok" : ""}" href="#m-${m.id}" data-niveau="${m.niveau}">${m.id} · ${esc(m.titre)}</a>`).join("")}</div>` : ""}
+      </div>
+    </article>`;
+  }).join("");
+  document.querySelectorAll(".cadre img").forEach(img => {
+    img.addEventListener("error", () => {
+      const e = ecranDe(img.dataset.ecran);
+      const div = document.createElement("div");
+      div.className = "schema";
+      div.innerHTML = `<div class="s-rail">${"<span></span>".repeat(3)}<span class="on"></span>${"<span></span>".repeat(6)}</div>
+        <div class="s-main"><span style="width:40%"></span><span></span><span></span><span style="width:85%"></span><span></span><span style="width:70%"></span>
+        <em>Capture « ${esc(e.libelle)} » pas encore générée : lancer tools/capture_screens.py après le seed.</em></div>`;
+      img.replaceWith(div);
+    }, { once: true });
+    img.addEventListener("click", () => { const d = $("#visionneuse"); d.querySelector("img").src = img.src; d.querySelector("img").alt = img.alt; d.showModal(); });
+  });
+}
+$("#visionneuse").addEventListener("click", e => e.currentTarget.close());
+
+/* ---------- Par question ---------- */
+function rendreQuestions(filtre = "") {
+  const f = normaliser(filtre);
+  const items = [];
+  DATA.groupes.flatMap(g => g.ecrans).forEach(id => ecranDe(id).questions.forEach(q => items.push({ q, cible: `#ecran-${id}`, ou: ecranDe(id).libelle })));
+  if (f) DATA.missions.forEach(m => items.push({ q: m.consigne, cible: `#m-${m.id}`, ou: `Mission ${m.id} · ${m.titre}`, niveau: m.niveau, extra: (m.enjeux || []).join(" ") }));
+  const liste = items.filter(i => !f || normaliser(i.q + i.ou + (i.extra || "")).includes(f));
+  $("#questions").innerHTML = liste.length
+    ? liste.map(i => `<a href="${i.cible}"${i.niveau ? ` data-niveau="${i.niveau}"` : ""}>${esc(i.q)}<span>${esc(i.ou)}</span></a>`).join("")
+    : `<p>Aucun résultat pour « ${esc(filtre)} ». Essaie un mot plus court : coût, session, erreur, prompt.</p>`;
+}
+$("#recherche").addEventListener("input", e => rendreQuestions(e.target.value));
+
+/* ---------- Missions ---------- */
+let niveauActif = store.get("lfx-niveau", DATA.niveaux[0].id);
+function rendreOnglets() {
+  $("#onglets").innerHTML = DATA.niveaux.map(n => {
+    const ms = DATA.missions.filter(m => m.niveau === n.id);
+    return `<button role="tab" type="button" aria-selected="${n.id === niveauActif}" data-niveau="${n.id}">${esc(n.nom)}<span class="c">${ms.filter(reussie).length}/${ms.length}</span></button>`;
+  }).join("");
+  $("#niveau-desc").textContent = DATA.niveaux.find(n => n.id === niveauActif).description;
+}
+$("#onglets").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  niveauActif = b.dataset.niveau; store.set("lfx-niveau", niveauActif); rendreMissions();
+});
+function lienMission(m) {
+  if (!m.route) return "";
+  return `<a target="_blank" rel="noopener" data-route="${esc(m.route)}" href="${esc(url(m.route))}">Ouvrir dans Langfuse</a>`;
+}
+function rendreMissions() {
+  rendreOnglets();
+  $("#liste-missions").innerHTML = DATA.missions.filter(m => m.niveau === niveauActif).map(m => {
+    const ok = reussie(m);
+    const e = ecranDe(m.ecran);
+    const champ = m.type === "action"
+      ? `<label class="coche"><input type="checkbox" data-action="${m.id}"${ok ? " checked" : ""}> C'est fait</label>`
+      : `<form class="repondre" data-mission="${m.id}"><input name="r" autocomplete="off" aria-label="Réponse à la mission ${m.id}" placeholder="Ta réponse" value="${ok ? esc(prog[m.id].r || "") : ""}"><button type="submit">Vérifier</button></form>
+         <div class="retour${ok ? " ok" : ""}" id="retour-${m.id}" role="status">${ok ? "Bonne réponse." : ""}</div>`;
+    return `<article class="mission${ok ? " reussie" : ""}" id="m-${m.id}">
+      <div class="tete"><span class="id">${m.id}</span><h3>${esc(m.titre)}</h3>${ok ? `<span class="etat">Réussie</span>` : ""}</div>
+      <div class="enjeux"><a class="puce" href="#ecran-${m.ecran}">${esc(e.libelle)}</a>${(m.enjeux || []).map(x => `<span class="enjeu" data-e="${esc(x)}">${esc(x)}</span>`).join("")}</div>
+      <p>${esc(m.consigne)}</p>
+      ${champ}
+      <details><summary>Indice</summary><p>${esc(m.indice)}</p></details>
+      <div class="pourquoi" ${ok || m.type === "action" ? "" : "hidden"} id="pq-${m.id}"><b>Pourquoi c'est important :</b> ${esc(m.pourquoi)}</div>
+      <div class="pied">${lienMission(m)}</div>
+    </article>`;
+  }).join("");
+  majProgression();
+}
+$("#liste-missions").addEventListener("submit", async e => {
+  e.preventDefault();
+  const form = e.target, id = form.dataset.mission, m = DATA.missions.find(x => x.id === id);
+  const saisie = form.r.value.trim();
+  if (!saisie) { $(`#retour-${id}`).textContent = "Saisis une réponse avant de vérifier."; return; }
+  const h = await sha256("lfx|" + normaliser(saisie));
+  const retour = $(`#retour-${id}`);
+  if (m.hashes.includes(h)) {
+    prog[id] = { ok: true, r: saisie, t: new Date().toISOString() }; store.set(CLE, prog);
+    retour.className = "retour ok"; retour.textContent = "Bonne réponse.";
+    form.r.setAttribute("aria-invalid", "false");
+    const art = $(`#m-${id}`); art.classList.add("reussie"); $(`#pq-${id}`).hidden = false;
+    majProgression(); rendreOnglets(); majPuces();
+  } else {
+    prog[id] = Object.assign({}, prog[id], { essais: ((prog[id] || {}).essais || 0) + 1 }); store.set(CLE, prog);
+    retour.className = "retour ko";
+    retour.textContent = prog[id].essais >= 2 ? "Pas encore. Ouvre l'indice : il indique où regarder." : "Pas encore. Vérifie la période (7 jours) et les filtres actifs.";
+    form.r.setAttribute("aria-invalid", "true");
+  }
+});
+$("#liste-missions").addEventListener("change", e => {
+  const id = e.target.dataset.action; if (!id) return;
+  prog[id] = e.target.checked ? { ok: true, t: new Date().toISOString() } : {}; store.set(CLE, prog);
+  $(`#m-${id}`).classList.toggle("reussie", e.target.checked);
+  majProgression(); rendreOnglets(); majPuces();
+});
+function majPuces() {
+  document.querySelectorAll(".ecran .puce").forEach(p => { const id = p.getAttribute("href").slice(3); const m = DATA.missions.find(x => x.id === id); p.classList.toggle("ok", !!(m && reussie(m))); });
+}
+function majProgression() {
+  const n = DATA.missions.filter(reussie).length, t = DATA.missions.length;
+  $("#jauge").style.width = `${(100 * n / t).toFixed(1)}%`;
+  $("#jauge-role").setAttribute("aria-valuemax", t); $("#jauge-role").setAttribute("aria-valuenow", n);
+  $("#jauge-texte").textContent = `${n} / ${t} missions`;
+  const c = $("#rail-compte"); c.textContent = `${n}/${t}`; c.classList.toggle("fini", n === t);
+}
+/* Un lien vers une mission d'un autre niveau bascule l'onglet */
+document.addEventListener("click", e => {
+  const a = e.target.closest('a[href^="#m-"]'); if (!a) return;
+  const m = DATA.missions.find(x => x.id === a.getAttribute("href").slice(3));
+  if (m && m.niveau !== niveauActif) { niveauActif = m.niveau; store.set("lfx-niveau", niveauActif); rendreMissions(); }
+});
+
+/* ---------- Adresse de Langfuse ---------- */
+function majLiens() {
+  document.querySelectorAll("[data-route]").forEach(a => a.href = url(a.dataset.route));
+  document.querySelectorAll("[data-route-texte]").forEach(c => c.textContent = url(c.dataset.routeTexte));
+  $("#lien-ui").href = base;
+}
+const champ = $("#base-url");
+champ.value = base;
+champ.addEventListener("change", () => { base = champ.value.trim() || "http://localhost:3100"; store.set("lfx-base-url", base); majLiens(); });
+
+/* ---------- Export ---------- */
+$("#exporter").addEventListener("click", () => {
+  const resume = { kit: "langfuse-explorer", version_langfuse: DATA.version, exporte_le: new Date().toISOString(),
+    reussies: DATA.missions.filter(reussie).map(m => m.id), total: DATA.missions.length, detail: prog };
+  const blob = new Blob([JSON.stringify(resume, null, 2)], { type: "application/json" });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "langfuse-explorer-progression.json"; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+});
+
+/* ---------- Thème ---------- */
+const themeSauve = store.get("lfx-theme", null);
+if (themeSauve) document.documentElement.dataset.theme = themeSauve;
+$("#theme").addEventListener("click", () => {
+  const sombre = document.documentElement.dataset.theme ? document.documentElement.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+  document.documentElement.dataset.theme = sombre ? "light" : "dark"; store.set("lfx-theme", document.documentElement.dataset.theme);
+});
+
+/* ---------- Rail actif au défilement ---------- */
+const obs = new IntersectionObserver(entries => entries.forEach(en => {
+  if (!en.isIntersecting) return;
+  document.querySelectorAll(".rail a").forEach(a => a.classList.toggle("actif", a.getAttribute("href") === `#${en.target.id}`));
+}), { rootMargin: "-30% 0px -60% 0px" });
+
+rendreRail(); rendreEcrans(); rendreQuestions(); rendreMissions(); majLiens();
+document.querySelectorAll("section.bloc, article.ecran").forEach(s => obs.observe(s));
+</script>
+</body>
+</html>
