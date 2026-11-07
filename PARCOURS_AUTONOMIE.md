@@ -56,6 +56,12 @@ Les points 1 à 6 rendent tout le reste lisible : ne les sautez pas.
 (`exercices/enonces/MiniProjet_J4_neerlandais.ipynb`). Il combine garde-fou, graphe, dataset et sécurité ; un corrigé
 existe, ne l'ouvrez qu'à la fin.
 
+## 3. Votre propre projet, avec votre assistant IA
+
+[`guide_ia/`](guide_ia/README.md) : définir votre projet (`modele_PROJET.md`), configurer votre assistant IA
+(`modele_AGENTS.md`, documentation à jour par MCP), puis les étapes 0 à 8 avec, pour chacune, le choix recommandé
+et sa raison.
+
 ## Les réflexes à garder
 
 - **Dessiner, exécuter, observer** : `draw_ascii()` avant de lancer, puis la trace Langfuse après.
