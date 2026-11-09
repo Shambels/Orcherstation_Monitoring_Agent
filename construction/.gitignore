@@ -1,0 +1,11 @@
+# Produits par les étapes : schémas Mermaid régénérés à chaque lancement
+sortie/
+# Le code que chaque apprenant écrit pendant la construction : il reste sur son poste
+atelier/*
+!atelier/README.md
+# Outils et réglages du poste du formateur
+comparer.py
+comparer_experiments.py
+distribution/
+.vscode/
+__pycache__/
