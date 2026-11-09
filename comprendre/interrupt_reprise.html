@@ -1,0 +1,781 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Interrupt et reprise</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout : un lecteur pas à pas. En haut l'horloge et la frise des deux processus, puis la narration,
+   puis trois vues synchronisées (graphe, checkpointer, code) et les deux terminaux. */
+:root{
+  --bg:#eef1f6; --surface:#ffffff; --surface-2:#e6eaf1; --line:#d2d9e4; --line-strong:#9aa6b8;
+  --fg:#121924; --muted:#576377;
+  --run:#2353cc; --run-soft:#dfe7fb; --on-run:#ffffff;
+  --pause:#a86400; --pause-soft:#fcefd8;
+  --disk:#0b7a68; --disk-soft:#dcf2ed;
+  --human:#b0236a; --human-soft:#f9e1ee;
+  --err:#c42b2b; --err-soft:#fbe3e3;
+  --term-bg:#0d1218; --term-fg:#d9e0ea; --term-muted:#7f8a9b; --term-line:#202a36;
+  --f-display:"IBM Plex Sans Condensed","Arial Narrow",system-ui,sans-serif;
+  --f-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,"Cascadia Mono",Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0c1016; --surface:#141a23; --surface-2:#1b2330; --line:#29323f; --line-strong:#56637a;
+  --fg:#e5eaf2; --muted:#94a1b5;
+  --run:#7aa2ff; --run-soft:#1c2a4a; --on-run:#0b1222;
+  --pause:#f0b03a; --pause-soft:#3a2b10;
+  --disk:#3fc8b0; --disk-soft:#0f2e2a;
+  --human:#f27bb4; --human-soft:#3a1529;
+  --err:#ff7676; --err-soft:#3a1515;
+  --term-bg:#06090d; --term-fg:#d9e0ea; --term-muted:#7f8a9b; --term-line:#1a222d;
+  color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --bg:#0c1016; --surface:#141a23; --surface-2:#1b2330; --line:#29323f; --line-strong:#56637a;
+  --fg:#e5eaf2; --muted:#94a1b5;
+  --run:#7aa2ff; --run-soft:#1c2a4a; --on-run:#0b1222;
+  --pause:#f0b03a; --pause-soft:#3a2b10;
+  --disk:#3fc8b0; --disk-soft:#0f2e2a;
+  --human:#f27bb4; --human-soft:#3a1529;
+  --err:#ff7676; --err-soft:#3a1515;
+  --term-bg:#06090d; --term-fg:#d9e0ea; --term-muted:#7f8a9b; --term-line:#1a222d;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:15px;line-height:1.5}
+.app{max-width:1440px;margin:0 auto;padding-block:20px 48px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
+  display:flex;flex-direction:column;gap:14px}
+code,.mono{font-family:var(--f-mono);font-size:.9em}
+p code,.cap-text code{background:var(--surface-2);padding:1px 5px;border-radius:4px}
+
+/* En-tête */
+.top{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;justify-content:space-between}
+.top h1{font-family:var(--f-display);font-weight:700;font-size:clamp(26px,3.2vw,38px);line-height:1.05;margin:0;text-wrap:balance;letter-spacing:-.01em}
+.top .sub{color:var(--muted);margin:6px 0 0;max-width:70ch}
+.clock{display:flex;align-items:baseline;gap:12px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px 16px}
+.clock .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted)}
+.clock .t{font-family:var(--f-mono);font-size:30px;font-weight:600;font-variant-numeric:tabular-nums}
+.clock .gap{font-family:var(--f-mono);font-size:13px;color:var(--pause);min-width:9ch}
+
+/* Frise */
+.timeline{position:relative;display:grid;grid-template-columns:40fr 20fr 40fr;gap:4px;padding-top:4px}
+.seg{border-radius:6px;padding:7px 10px;font-size:12.5px;line-height:1.25;border:1px solid transparent;min-width:0}
+.seg b{display:block;font-family:var(--f-display);font-size:14px;font-weight:600}
+.seg.p1{background:var(--run-soft);border-color:color-mix(in srgb,var(--run) 35%,transparent)}
+.seg.pz{background:repeating-linear-gradient(135deg,var(--pause-soft) 0 8px,transparent 8px 14px);border-color:color-mix(in srgb,var(--pause) 45%,transparent)}
+.seg.p2{background:var(--human-soft);border-color:color-mix(in srgb,var(--human) 35%,transparent)}
+.seg span{color:var(--muted)}
+.seg.dim{opacity:.45}
+.marker{position:absolute;top:-6px;bottom:-6px;width:3px;background:var(--fg);border-radius:2px;transition:left .5s ease;pointer-events:none}
+.marker::before{content:"";position:absolute;top:-5px;left:-5px;border:6.5px solid transparent;border-top-color:var(--fg)}
+
+/* Narration + commandes */
+.stage{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px;align-items:start;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 20px}
+.cap-step{font-size:12px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);display:flex;gap:10px;align-items:center}
+.phase-chip{font-weight:600;padding:2px 8px;border-radius:99px;letter-spacing:.05em}
+.phase-chip.p0{background:var(--surface-2);color:var(--muted)}
+.phase-chip.p1{background:var(--run-soft);color:var(--run)}
+.phase-chip.pz{background:var(--pause-soft);color:var(--pause)}
+.phase-chip.p2{background:var(--human-soft);color:var(--human)}
+.cap-title{font-family:var(--f-display);font-size:clamp(22px,2.4vw,28px);font-weight:700;margin:4px 0 6px;line-height:1.15;text-wrap:balance}
+.cap-text{font-size:16.5px;max-width:78ch;margin:0}
+.cap-text b{font-weight:600}
+.choices{display:flex;flex-wrap:wrap;gap:14px 22px;margin-top:12px;padding:12px 14px;border:1px dashed var(--human);border-radius:10px;background:var(--human-soft)}
+.choices .grp{display:flex;flex-direction:column;gap:6px}
+.choices .grp>span{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--human);font-weight:600}
+.seg-btns{display:flex;gap:6px;flex-wrap:wrap}
+.seg-btns button,.thread-row button{font:inherit;font-size:14px;padding:6px 12px;border-radius:7px;border:1px solid var(--line-strong);background:var(--surface);color:var(--fg);cursor:pointer}
+.seg-btns button[aria-pressed="true"]{background:var(--human);border-color:var(--human);color:var(--surface)}
+.thread-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.thread-row input{font-family:var(--f-mono);font-size:14px;width:12ch;padding:6px 8px;border-radius:7px;border:1px solid var(--line-strong);background:var(--surface);color:var(--fg)}
+.controls{display:flex;flex-direction:column;gap:10px;align-items:flex-end}
+.btns{display:flex;gap:6px}
+.btn{font:inherit;font-weight:600;font-size:14px;padding:9px 14px;border-radius:8px;border:1px solid var(--line-strong);background:var(--surface);color:var(--fg);cursor:pointer;white-space:nowrap}
+.btn.primary{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.btn:disabled{opacity:.35;cursor:not-allowed}
+.btn:focus-visible,.dot:focus-visible,.seg-btns button:focus-visible,.thread-row button:focus-visible,.thread-row input:focus-visible{outline:3px solid var(--run);outline-offset:2px}
+.dots{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;max-width:330px}
+.dot{width:17px;height:17px;border-radius:4px;border:1px solid var(--line-strong);background:var(--surface);cursor:pointer;padding:0}
+.dot.p1{border-color:var(--run)} .dot.pz{border-color:var(--pause)} .dot.p2{border-color:var(--human)}
+.dot.seen.p1{background:var(--run-soft)} .dot.seen.pz{background:var(--pause-soft)} .dot.seen.p2{background:var(--human-soft)} .dot.seen.p0{background:var(--surface-2)}
+.dot.cur{outline:2px solid var(--fg);outline-offset:1px}
+.dot:disabled{opacity:.3;cursor:not-allowed}
+.hint{font-size:12px;color:var(--muted)}
+
+/* Trois vues */
+.views{display:grid;grid-template-columns:minmax(260px,.85fr) minmax(0,1.1fr) minmax(0,1.25fr);gap:14px;align-items:start}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px;min-width:0}
+.panel h2{font-family:var(--f-display);font-size:15px;font-weight:600;margin:0 0 2px;text-transform:uppercase;letter-spacing:.06em}
+.panel .ph{font-size:12.5px;color:var(--muted);margin:0 0 10px}
+
+/* Graphe */
+#graph{width:100%;max-width:380px;display:block;margin:0 auto}
+#graph text{font-family:var(--f-mono);font-size:13px;fill:var(--fg)}
+#graph .elab{font-size:10.5px;fill:var(--muted);font-family:var(--f-body)}
+.edge{stroke:var(--line-strong);stroke-width:1.8;fill:none;marker-end:url(#arr)}
+.edge.p3{stroke-dasharray:3 4;opacity:.6}
+.edge.trail{stroke:var(--run);opacity:.55;marker-end:url(#arrRun)}
+.edge.on{stroke:var(--run);stroke-width:3;opacity:1;stroke-dasharray:7 5;animation:flow .7s linear infinite;marker-end:url(#arrRun)}
+@keyframes flow{to{stroke-dashoffset:-12}}
+.node rect,.node circle{fill:var(--surface);stroke:var(--line-strong);stroke-width:1.6;transition:fill .3s,stroke .3s}
+.node.done rect,.node.done circle{fill:var(--run-soft);stroke:var(--run)}
+.node.on rect,.node.on circle{fill:var(--run);stroke:var(--run)}
+.node.on text{fill:var(--on-run)}
+.node.paused rect{fill:var(--pause-soft);stroke:var(--pause);stroke-width:2.5;stroke-dasharray:6 4;animation:breathe 1.6s ease-in-out infinite}
+@keyframes breathe{50%{stroke-opacity:.35}}
+#pausebadge{opacity:0;transition:opacity .3s}
+#pausebadge.show{opacity:1}
+#pausebadge circle{fill:var(--pause)} #pausebadge rect{fill:var(--pause-soft)}
+#vcount{font-size:11px !important;fill:var(--pause) !important;font-weight:600}
+#graph .human-tag{font-family:var(--f-body);font-size:10.5px;fill:var(--human)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--muted);margin-top:6px;justify-content:center}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:-2px;margin-right:5px;border:1.5px solid}
+.lg-on{background:var(--run);border-color:var(--run)} .lg-done{background:var(--run-soft);border-color:var(--run)} .lg-pause{background:var(--pause-soft);border-color:var(--pause);border-style:dashed !important}
+
+/* Checkpointer */
+.disk-h{display:flex;align-items:center;gap:8px}
+.disk-h svg{flex:none}
+.query{font-family:var(--f-mono);font-size:12.5px;border-radius:8px;padding:8px 10px;margin-bottom:10px;border:1.5px solid var(--disk);background:var(--disk-soft);overflow-wrap:anywhere}
+.query.miss{border-color:var(--err);background:var(--err-soft)}
+.query .res{display:block;margin-top:4px;font-family:var(--f-body);font-size:13px}
+.thread{border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:8px}
+.thread .th{font-size:13px;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.thread .th b{font-family:var(--f-mono);font-weight:600}
+.thread.other{opacity:.6}
+.thread.hit{border:2px solid var(--disk);box-shadow:0 0 0 4px var(--disk-soft)}
+.cps{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:4px}
+.cps li{display:grid;grid-template-columns:34px minmax(0,1fr) auto;gap:8px;align-items:center;font-size:12.5px;padding:4px 6px;border-radius:6px;background:var(--surface-2)}
+.cps li.sel{background:var(--disk-soft);outline:1.5px solid var(--disk)}
+.cps .n{font-family:var(--f-mono);font-weight:600;color:var(--disk)}
+.cps .nx{font-family:var(--f-mono);color:var(--muted);font-size:11.5px}
+.cps .irq{grid-column:2 / -1;font-size:11.5px;color:var(--pause);font-weight:600}
+.cps .irq.done{color:var(--muted);font-weight:400;text-decoration:line-through}
+.empty{font-size:12.5px;color:var(--muted);font-style:italic;margin-top:6px}
+.snap{border-top:1px dashed var(--line);margin-top:10px;padding-top:10px}
+.snap h3{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 6px;font-weight:600}
+.kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 12px;font-family:var(--f-mono);font-size:12px}
+.kv dt{color:var(--muted)} .kv dd{margin:0;overflow-wrap:anywhere}
+.kv dd.chg{color:var(--disk);font-weight:600}
+.irqbox{margin-top:8px;border:1.5px solid var(--pause);background:var(--pause-soft);border-radius:7px;padding:6px 9px;font-size:12.5px}
+.irqbox b{color:var(--pause)}
+.itsm{margin-top:10px;border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.itsm h3{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 4px;font-weight:600}
+.itsm ul{list-style:none;padding:0;margin:0;font-family:var(--f-mono);font-size:12px;display:flex;flex-direction:column;gap:3px}
+.itsm li.newt{color:var(--disk);font-weight:600}
+
+/* Code */
+.code-h{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:10px 0 4px;font-weight:600;display:flex;justify-content:space-between;gap:8px}
+.code-h:first-of-type{margin-top:0}
+.vcount-badge{color:var(--pause);text-transform:none;letter-spacing:0}
+pre.code{margin:0;background:var(--surface-2);border-radius:8px;padding:6px 0;overflow-x:auto;font-family:var(--f-mono);font-size:12.3px;line-height:1.6}
+pre.code .ln{display:block;padding:0 12px;white-space:pre;border-left:3px solid transparent;transition:background .25s}
+pre.code .ln.hl{background:var(--run-soft);border-left-color:var(--run)}
+pre.code .ln.hlp{background:var(--pause-soft);border-left-color:var(--pause)}
+pre.code .ln.hlh{background:var(--human-soft);border-left-color:var(--human)}
+pre.code .ln.hle{background:var(--err-soft);border-left-color:var(--err)}
+pre.code .ln.skip{opacity:.35}
+.k{color:var(--human)} .s{color:var(--disk)} .f{color:var(--run)} .c{color:var(--muted);font-style:italic}
+.note{margin-top:8px;border-radius:8px;padding:8px 11px;font-size:13.5px;border:1.5px solid var(--run);background:var(--run-soft)}
+.note.p{border-color:var(--pause);background:var(--pause-soft)}
+.note.h{border-color:var(--human);background:var(--human-soft)}
+
+/* Terminaux */
+.terms{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.term{background:var(--term-bg);color:var(--term-fg);border-radius:12px;overflow:hidden;border:1px solid var(--term-line);min-width:0;display:flex;flex-direction:column;transition:opacity .4s}
+.term.idle{opacity:.55}
+.term-h{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 14px;border-bottom:1px solid var(--term-line);font-size:13px}
+.term-h .who{font-weight:600}
+.term-h .who small{font-weight:400;color:var(--term-muted)}
+.pill{font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:99px;text-transform:uppercase;letter-spacing:.05em;background:#222b37;color:var(--term-muted)}
+.pill.run{background:#173a2f;color:#5fe0b5}
+.pill.dead{background:#3a1d1d;color:#ff9a9a}
+.ram{padding:6px 14px;font-size:12px;color:var(--term-muted);border-bottom:1px solid var(--term-line)}
+.ram b{color:var(--term-fg);font-weight:600}
+.term-b{padding:10px 14px 14px;font-family:var(--f-mono);font-size:12.6px;line-height:1.6;min-height:190px;overflow-x:auto}
+.term-b div{white-space:pre-wrap;overflow-wrap:anywhere}
+.term-b .cmd{color:#9cc2ff}
+.term-b .sys{color:var(--term-muted);font-style:italic}
+.term-b .warn{color:#ffc561}
+.term-b .bad{color:#ff8f8f}
+.term-b .good{color:#78e2bd}
+.term-b .spin{color:var(--term-muted)}
+.term-b .spin::after{content:"";display:inline-block;width:1ch;animation:dots 1.2s steps(4) infinite}
+@keyframes dots{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
+.fresh{animation:fresh .45s ease both}
+@keyframes fresh{from{opacity:0;transform:translateY(5px)}}
+
+/* Pause : voile sur les terminaux */
+.terms-wrap{position:relative}
+.pause-veil{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;opacity:0;transition:opacity .5s}
+.pause-veil.show{opacity:1}
+.pause-veil div{background:var(--pause-soft);color:var(--pause);border:2px solid var(--pause);border-radius:12px;padding:12px 20px;font-family:var(--f-display);font-weight:700;font-size:clamp(17px,2vw,22px);text-align:center;max-width:90%}
+.pause-veil small{display:block;font-family:var(--f-body);font-weight:500;font-size:14px;color:var(--fg)}
+
+/* À retenir */
+.lessons{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+.lesson{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.lesson .n{font-family:var(--f-display);font-weight:700;font-size:13px;color:var(--muted);letter-spacing:.06em}
+.lesson h3{font-family:var(--f-display);font-size:18px;margin:2px 0 6px;line-height:1.2}
+.lesson p{margin:0;font-size:14px;color:var(--muted)}
+.lesson p code{color:var(--fg)}
+.sect-h{font-family:var(--f-display);font-size:20px;font-weight:700;margin:10px 0 0}
+
+@media (max-width:1180px){
+  .views{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  .views .panel.code-p{grid-column:1 / -1}
+  .lessons{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:760px){
+  .stage{grid-template-columns:1fr}
+  .controls{align-items:stretch}
+  .dots{justify-content:flex-start;max-width:none}
+  .views,.terms,.lessons{grid-template-columns:1fr}
+  .timeline{grid-template-columns:1fr 1fr 1fr}
+  .seg span{display:none}
+  .clock .t{font-size:24px}
+}
+@media (prefers-reduced-motion:reduce){
+  *{animation:none !important;transition:none !important}
+}
+</style>
+</head>
+<body>
+
+<div class="app">
+  <header class="top">
+    <div>
+      <h1>Interrupt et reprise, pas à pas</h1>
+      <p class="sub">Un ticket P1 attend la décision d'un responsable. Le premier programme s'arrête, un second le reprend deux heures plus tard grâce au <code>thread_id</code>. Le code est celui de <code>construction/etape_05_validation_ticket.py</code>.</p>
+    </div>
+    <div class="clock" aria-label="Horloge de la scène">
+      <span class="lbl">Heure</span>
+      <span class="t" id="clock">09:14:00</span>
+      <span class="gap" id="clockgap"></span>
+    </div>
+  </header>
+
+  <div class="timeline" aria-hidden="true">
+    <div class="seg p1" id="seg1"><b>Processus 1 · agent N1</b><span>lance la demande, s'arrête sur la question</span></div>
+    <div class="seg pz" id="segz"><b>Pause</b><span>aucun programme</span></div>
+    <div class="seg p2" id="seg2"><b>Processus 2 · Marie</b><span>retrouve le thread, décide, reprend</span></div>
+    <div class="marker" id="marker"></div>
+  </div>
+
+  <section class="stage" aria-live="polite">
+    <div>
+      <div class="cap-step"><span id="stepno">Étape 0 / 15</span><span class="phase-chip p0" id="phasechip">Avant</span></div>
+      <h2 class="cap-title" id="captitle"></h2>
+      <p class="cap-text" id="captext"></p>
+      <div class="choices" id="choices" hidden>
+        <div class="grp">
+          <span>Ce que décide Marie</span>
+          <div class="seg-btns">
+            <button type="button" id="dApprove" aria-pressed="true">--approuver marie</button>
+            <button type="button" id="dRefuse" aria-pressed="false">--refuser marie</button>
+          </div>
+        </div>
+        <div class="grp">
+          <span>Le thread qu'elle tape</span>
+          <div class="thread-row">
+            <label for="threadIn" class="mono">--thread</label>
+            <input id="threadIn" value="t-vpn" maxlength="20" spellcheck="false" autocomplete="off">
+            <button type="button" id="typo">Essayer « t-vnp »</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="controls">
+      <div class="btns">
+        <button class="btn" id="bReset" title="Recommencer">⟲</button>
+        <button class="btn" id="bPrev">◀ Précédent</button>
+        <button class="btn primary" id="bPlay">▶ Lecture</button>
+        <button class="btn" id="bNext">Suivant ▶</button>
+      </div>
+      <div class="dots" id="dots"></div>
+      <div class="hint">Clavier : ← → pour avancer, espace pour lecture/pause</div>
+    </div>
+  </section>
+
+  <div class="views">
+    <section class="panel">
+      <h2>Le graphe</h2>
+      <p class="ph">Le nœud en cours, le chemin déjà parcouru.</p>
+      <svg id="graph" viewBox="0 0 360 480" role="img" aria-label="Graphe : START, trier, agent, tools, valider, creer_ticket, END">
+        <defs>
+          <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" style="fill:var(--line-strong)"/></marker>
+          <marker id="arrRun" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" style="fill:var(--run)"/></marker>
+        </defs>
+        <path class="edge" id="e_st" d="M180 38 L180 73"/>
+        <path class="edge" id="e_ta" d="M180 115 L180 148"/>
+        <path class="edge" id="e_at" d="M240 163 L270 163"/>
+        <path class="edge" id="e_tt" d="M270 179 L240 179"/>
+        <path class="edge" id="e_av" d="M150 191 L117 243"/>
+        <path class="edge p3" id="e_ac" d="M205 191 L205 338"/>
+        <path class="edge" id="e_vc" d="M130 287 L165 338"/>
+        <path class="edge" id="e_ve" d="M60 287 C 20 360, 60 445, 166 452"/>
+        <path class="edge" id="e_ce" d="M185 380 L185 440"/>
+        <text class="elab" x="122" y="214">P1</text>
+        <text class="elab" x="211" y="262">P3 : direct</text>
+        <text class="elab" x="150" y="306">approuver</text>
+        <text class="elab" x="12" y="395">refuser</text>
+        <text class="elab" x="243" y="150">outil ?</text>
+
+        <g class="node" id="n-START"><circle cx="180" cy="28" r="10"/><text x="198" y="32" class="elab">START</text></g>
+        <g class="node" id="n-trier"><rect x="125" y="75" width="110" height="40" rx="8"/><text x="180" y="100" text-anchor="middle">trier</text></g>
+        <g class="node" id="n-agent"><rect x="120" y="151" width="120" height="40" rx="8"/><text x="180" y="176" text-anchor="middle">agent</text></g>
+        <g class="node" id="n-tools"><rect x="272" y="151" width="78" height="40" rx="8"/><text x="311" y="176" text-anchor="middle">tools</text></g>
+        <g class="node" id="n-valider"><rect x="40" y="245" width="120" height="42" rx="8"/><text x="100" y="271" text-anchor="middle">valider</text></g>
+        <text class="human-tag" x="100" y="238" text-anchor="middle">décision humaine</text>
+        <g id="pausebadge"><circle cx="162" cy="246" r="12"/><rect x="157" y="240" width="3.5" height="12" rx="1"/><rect x="163.5" y="240" width="3.5" height="12" rx="1"/></g>
+        <text id="vcount" x="100" y="302" text-anchor="middle"></text>
+        <g class="node" id="n-creer"><rect x="115" y="340" width="140" height="40" rx="8"/><text x="185" y="365" text-anchor="middle">creer_ticket</text></g>
+        <g class="node" id="n-END"><circle cx="180" cy="452" r="12"/><text x="200" y="456" class="elab">END</text></g>
+      </svg>
+      <div class="legend"><span><i class="lg-on"></i>en cours</span><span><i class="lg-done"></i>déjà exécuté</span><span><i class="lg-pause"></i>en pause</span></div>
+    </section>
+
+    <section class="panel">
+      <div class="disk-h">
+        <svg width="22" height="26" viewBox="0 0 22 26" aria-hidden="true"><ellipse cx="11" cy="5" rx="9" ry="3.5" style="fill:var(--disk-soft);stroke:var(--disk)" stroke-width="1.6"/><path d="M2 5v16c0 2 4 3.5 9 3.5s9-1.5 9-3.5V5" style="fill:none;stroke:var(--disk)" stroke-width="1.6"/><path d="M2 13c0 2 4 3.5 9 3.5s9-1.5 9-3.5" style="fill:none;stroke:var(--disk)" stroke-width="1.6"/></svg>
+        <h2>Le checkpointer</h2>
+      </div>
+      <p class="ph"><code>data/checkpoints/construction.sqlite</code>, sur le disque. Les checkpoints sont rangés par <code>thread_id</code>.</p>
+      <div id="store"></div>
+    </section>
+
+    <section class="panel code-p">
+      <h2>Le code</h2>
+      <p class="ph">Les deux terminaux exécutent le même fichier. La ligne surlignée est celle qui tourne.</p>
+      <div class="code-h"><span>Le programme principal</span></div>
+      <pre class="code" id="codeMain"></pre>
+      <div class="code-h"><span>Le nœud valider</span><span class="vcount-badge" id="vbadge"></span></div>
+      <pre class="code" id="codeVal"></pre>
+      <div id="note"></div>
+    </section>
+  </div>
+
+  <div class="terms-wrap">
+    <div class="terms">
+      <section class="term idle" id="term1">
+        <div class="term-h"><span class="who">Terminal 1 · agent N1 <small>poste du support</small></span><span class="pill" id="pill1">pas lancé</span></div>
+        <div class="ram" id="ram1">Mémoire du processus : <b>aucun processus</b></div>
+        <div class="term-b" id="tb1"></div>
+      </section>
+      <section class="term idle" id="term2">
+        <div class="term-h"><span class="who">Terminal 2 · Marie <small>responsable, sur son poste</small></span><span class="pill" id="pill2">pas lancé</span></div>
+        <div class="ram" id="ram2">Mémoire du processus : <b>aucun processus</b></div>
+        <div class="term-b" id="tb2"></div>
+      </section>
+    </div>
+    <div class="pause-veil" id="veil"><div>Aucun programme ne tourne<small>L'état complet attend dans le checkpoint #4 du thread t-vpn</small></div></div>
+  </div>
+
+  <h2 class="sect-h">Ce qu'il faut retenir</h2>
+  <div class="lessons">
+    <article class="lesson"><div class="n">1 · LA PAUSE</div><h3>interrupt() arrête tout et rend la main</h3><p><code>invoke()</code> se termine. Le programme peut afficher la question et quitter. Personne n'attend devant l'écran.</p></article>
+    <article class="lesson"><div class="n">2 · LA MÉMOIRE</div><h3>L'état est sur disque, rangé sous le thread_id</h3><p>Sans checkpointer, pas d'interrupt possible. Le <code>thread_id</code> est la seule clé pour retrouver la conversation.</p></article>
+    <article class="lesson"><div class="n">3 · LA REPRISE</div><h3>Même thread_id + Command(resume=…)</h3><p>La valeur passée à <code>resume</code> devient le retour de <code>interrupt()</code>. On ne renvoie pas le ticket : il est déjà dans l'état.</p></article>
+    <article class="lesson"><div class="n">4 · LE PIÈGE</div><h3>Le nœud repart du début</h3><p>À la reprise, <code>valider</code> est rejoué depuis sa première ligne. Rien d'irréversible avant <code>interrupt()</code> : l'action à impact va dans son propre nœud.</p></article>
+  </div>
+</div>
+
+<script>
+(function(){
+"use strict";
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const TICKET = "Le VPN est bloqué pour tout le service, urgent";
+const MOTIF = "panne déjà signalée par le NOC";
+
+/* ---------- le code affiché ---------- */
+const CODE_MAIN = [
+  ["m0", 'graphe = builder.<span class="f">compile</span>(checkpointer=memoire)   <span class="c"># SqliteSaver : le fichier .sqlite</span>'],
+  ["m1", 'config = {<span class="s">"configurable"</span>: {<span class="s">"thread_id"</span>: args.thread}}'],
+  ["m2", '<span class="k">if</span> args.approuver <span class="k">or</span> args.refuser:'],
+  ["m3", '    <span class="k">if not</span> <span class="f">en_attente</span>(graphe, config):   <span class="c"># get_state(config).tasks → interrupts</span>'],
+  ["m4", '        <span class="k">raise</span> SystemExit(<span class="s">f"Rien à valider sur le thread {args.thread}."</span>)'],
+  ["m5", '    entree = <span class="f">Command</span>(resume={<span class="s">"action"</span>: …, <span class="s">"par"</span>: …, <span class="s">"motif"</span>: …})'],
+  ["m6", '<span class="k">else</span>:'],
+  ["m7", '    entree = {<span class="s">"ticket"</span>: args.message}'],
+  ["m8", 'etat = graphe.<span class="f">invoke</span>(entree, config=config)'],
+  ["m9", '<span class="k">if</span> <span class="f">en_attente</span>(graphe, config): <span class="f">print</span>(<span class="s">"⏸  Créer ce ticket P1 ? …"</span>)'],
+];
+const CODE_VAL = [
+  ["v1", '<span class="k">def</span> <span class="f">valider</span>(state):'],
+  ["v2", '    decision = <span class="f">interrupt</span>({<span class="s">"question"</span>: <span class="s">"Créer ce ticket P1 ?"</span>, <span class="s">"ticket"</span>: …})'],
+  ["v3", '    <span class="k">if</span> decision[<span class="s">"action"</span>] == <span class="s">"approuver"</span>:'],
+  ["v4", '        <span class="k">return</span> <span class="f">Command</span>(goto=<span class="s">"creer_ticket"</span>, update={<span class="s">"valide_par"</span>: decision[<span class="s">"par"</span>]})'],
+  ["v5", '    refus = <span class="f">AIMessage</span>(<span class="s">f"Ticket P1 refusé par {decision[\'par\']} : …"</span>)'],
+  ["v6", '    <span class="k">return</span> <span class="f">Command</span>(goto=END, update={<span class="s">"messages"</span>: [refus]})'],
+];
+$("codeMain").innerHTML = CODE_MAIN.map(([id,h]) => `<span class="ln" data-l="${id}">${h}</span>`).join("");
+$("codeVal").innerHTML  = CODE_VAL.map(([id,h]) => `<span class="ln" data-l="${id}">${h}</span>`).join("");
+
+/* ---------- les étapes ---------- */
+const PH = {p0:"Avant", p1:"Processus 1", pz:"Pause", p2:"Processus 2"};
+const PHASE = [ "p0","p1","p1","p1","p1","p1","p1","p1","pz","p2","p2","p2","p2","p2","p2","p2" ];
+const MARK  = [ 1,   4,   9,   14,  19,  25,  31,  37,  50,  63,  69,  75,  81,  87,  93,  98 ];
+
+const cp = (n, label, next, values, extra) => Object.assign({n, label, next, values}, extra || {});
+const V0 = {ticket: "Le VPN est bloqué…", messages: "0"};
+const V1 = {ticket: "Le VPN est bloqué…", categorie: "reseau", priorite: "P1", file: "N2-infra", valide_par: '""', messages: "1"};
+
+function initial(){
+  return {
+    clock: "09:14:00", gap: "", phase: "p0",
+    doneN: [], trail: [], cps: [], tickets: [{id:"NT-0001", txt:"t-imprimante · materiel · P3 · N1"}],
+    t1: [], t2: [], p1: "idle", p2: "idle",
+    ram1: "aucun processus", ram2: "aucun processus",
+    vexec: 0, irqAnswered: false, threadHit: null,
+  };
+}
+function resetTransient(s){
+  s.paused = false; s.edge = null; s.code = []; s.codeCls = "hl"; s.skip = [];
+  s.note = null; s.lookup = null; s.cpSel = null; s.blocked = false; s.choices = false;
+  s.inv1 = false; s.inv2 = false; s.veil = false; s.chg = [];
+}
+const step = (s, node, edge) => { if (s.active && !s.doneN.includes(s.active)) s.doneN.push(s.active); s.active = node; s.edge = edge; if (edge && !s.trail.includes(edge)) s.trail.push(edge); };
+
+const STEPS = [
+  /* 0 */ (s) => {
+    s.title = "Avant de lancer";
+    s.text = "Le graphe est compilé avec un <b>checkpointer</b> : <code>builder.compile(checkpointer=memoire)</code>. Ce checkpointer est un fichier SQLite sur le disque. Il contient déjà une conversation terminée, <code>t-imprimante</code>. Pour <code>t-vpn</code>, il n'y a encore rien.";
+    s.code = ["m0"];
+  },
+  /* 1 */ (s) => {
+    s.clock = "09:14:02"; s.p1 = "run"; s.ram1 = "l'état du graphe, pendant qu'il tourne";
+    s.t1.push({c:"cmd", x:'$ uv run … etape_05_validation_ticket.py --thread t-vpn "' + TICKET + '"'});
+    s.t1.push({x:"🎫 " + TICKET});
+    s.cps.push(cp(0, "entrée reçue", "trier", V0));
+    s.active = "START"; s.edge = "e_st"; s.trail.push("e_st");
+    s.code = ["m1","m6","m7","m8"]; s.skip = ["m2","m3","m4","m5"]; s.inv1 = true; s.chg = ["ticket"];
+    s.title = "L'agent N1 lance la demande";
+    s.text = "Le programme démarre avec <code>thread_id = \"t-vpn\"</code>. Ce nom est l'étiquette sous laquelle tout l'état sera rangé. <code>invoke()</code> reçoit le ticket. Avant même le premier nœud, LangGraph écrit le <b>checkpoint #0</b> dans le fichier.";
+  },
+  /* 2 */ (s) => {
+    s.clock = "09:14:03"; step(s, "trier", "e_st");
+    s.cps.push(cp(1, "après trier", "agent", V1)); s.code = ["m8"]; s.inv1 = true;
+    s.chg = ["categorie","priorite","file"];
+    s.title = "Le nœud trier";
+    s.text = "trier classe le ticket : catégorie <b>reseau</b>, priorité <b>P1</b> (à cause du mot « urgent »), file <b>N2-infra</b>. Après chaque nœud, LangGraph écrit un nouveau checkpoint : une photo complète de l'état à cet instant.";
+  },
+  /* 3 */ (s) => {
+    s.clock = "09:14:05"; step(s, "agent", "e_ta");
+    s.cps.push(cp(2, "après agent", "tools", Object.assign({}, V1, {messages:"2"}))); s.code = ["m8"]; s.inv1 = true; s.chg = ["messages"];
+    s.title = "L'agent demande un outil";
+    s.text = "L'agent veut vérifier le serveur : il demande <code>statut_serveur(\"srv-vpn-01\")</code>. Le checkpoint #2 note que le prochain nœud est <code>tools</code>.";
+  },
+  /* 4 */ (s) => {
+    s.clock = "09:14:05"; step(s, "tools", "e_at");
+    s.cps.push(cp(3, "après tools", "agent", Object.assign({}, V1, {messages:"3"}))); s.code = ["m8"]; s.inv1 = true; s.chg = ["messages"];
+    s.title = "L'outil répond";
+    s.text = "<code>statut_serveur</code> renvoie « en ligne ». Le résultat est ajouté aux messages, puis on revient à l'agent. Checkpoint #3.";
+  },
+  /* 5 */ (s) => {
+    s.clock = "09:14:08"; step(s, "agent", "e_tt");
+    s.cps.push(cp(4, "après agent", "valider", Object.assign({}, V1, {messages:"4"}))); s.code = ["m8"]; s.inv1 = true; s.chg = ["messages"];
+    s.title = "L'agent conclut : c'est un P1";
+    s.text = "L'agent répond sans appeler d'outil. <code>apres_agent</code> regarde la priorité : P1, donc le prochain nœud est <code>valider</code>. Le <b>checkpoint #4</b> enregistre <code>next = valider</code>. Retenez ce numéro : c'est lui qui servira à reprendre.";
+  },
+  /* 6 */ (s) => {
+    s.clock = "09:14:08"; step(s, "valider", "e_av"); s.paused = true; s.vexec = 1;
+    s.cps[4].irq = true; s.inv1 = true; s.code = ["v1","v2"]; s.codeCls = "hlp"; s.skip = ["v3","v4","v5","v6"]; s.cpSel = 4;
+    s.note = {cls:"p", h:"<b>Première exécution.</b> <code>interrupt()</code> ne renvoie rien : il lève une exception spéciale (<code>GraphInterrupt</code>). Le nœud s'arrête sur cette ligne. Les lignes suivantes ne s'exécutent pas."};
+    s.title = "valider appelle interrupt()";
+    s.text = "valider commence et appelle <code>interrupt({...})</code> dès sa première ligne. LangGraph attrape l'exception, <b>range la question dans le checkpoint #4</b> et arrête le graphe. valider n'a pas fini : il n'y a pas de checkpoint #5.";
+  },
+  /* 7 */ (s) => {
+    s.clock = "09:14:09"; s.active = "valider"; s.paused = true;
+    s.t1.push({x:"   🧰 outil appelé : statut_serveur({'nom': 'srv-vpn-01'})"});
+    s.t1.push({x:"   🏷️  reseau · P1 · file N2-infra"});
+    s.t1.push({x:"   🤖 Le serveur srv-vpn-01 est en ligne. Je propose un ticket P1 pour l'équipe N2-infra."});
+    s.t1.push({c:"warn", x:"⏸  Créer ce ticket P1 ? Le graphe est arrêté, son état est dans le checkpoint. Pour reprendre :"});
+    s.t1.push({c:"warn", x:"   ... etape_05_validation_ticket.py --thread t-vpn --approuver <nom>   (ou --refuser <nom> --motif ...)"});
+    s.t1.push({x:"🔭 Langfuse › Sessions › t-vpn"});
+    s.t1.push({c:"sys", x:"[processus terminé · code 0]"});
+    s.p1 = "dead"; s.ram1 = "libérée : il ne reste rien du graphe en mémoire";
+    s.code = ["m8","m9"]; s.codeCls = "hlp"; s.cpSel = 4;
+    s.title = "invoke() rend la main, le programme quitte";
+    s.text = "<code>graphe.invoke()</code> se termine normalement. Le programme lit la question dans le checkpoint, l'affiche, puis quitte. Le processus meurt et sa mémoire est libérée. <b>Il ne reste que le fichier SQLite.</b>";
+  },
+  /* 8 */ (s) => {
+    s.clock = "11:32:40"; s.gap = "+2 h 18 min"; s.active = "valider"; s.paused = true; s.veil = true; s.cpSel = 4;
+    s.title = "La pause";
+    s.text = "Personne n'attend devant l'écran. Aucun programme ne tourne. Le graphe n'est en mémoire nulle part. Tout ce qu'il faut pour reprendre est dans le checkpoint #4 : l'état, le prochain nœud, la question posée. On pourrait éteindre le PC.";
+  },
+  /* 9 */ (s, c) => {
+    s.clock = "11:32:40"; s.gap = "+2 h 18 min"; s.active = "valider"; s.paused = true;
+    s.p2 = "run"; s.ram2 = "vide : il ne connaît que le thread_id qu'on lui donne";
+    const cmd = c.decision === "approuver" ? `--thread ${c.thread} --approuver marie` : `--thread ${c.thread} --refuser marie --motif "${MOTIF}"`;
+    s.t2.push({c:"cmd", x:"$ uv run … etape_05_validation_ticket.py " + cmd});
+    s.code = ["m1","m2"]; s.codeCls = "hlh"; s.choices = true;
+    s.title = "Marie lance la reprise";
+    s.text = "Deux heures plus tard, Marie lance <b>le même programme</b> dans un autre terminal. C'est un nouveau processus : il ne sait rien de ce qui s'est passé. Il connaît seulement le <code>thread_id</code> passé en argument. Choisissez ci-dessous ce que décide Marie. Vous pouvez aussi essayer un thread mal tapé.";
+  },
+  /* 10 */ (s, c) => {
+    s.active = "valider"; s.paused = true; s.clock = "11:32:41"; s.gap = "+2 h 18 min";
+    if (c.thread !== "t-vpn") {
+      s.lookup = {thread: c.thread, found: false}; s.threadHit = null;
+      s.t2.push({c:"bad", x:`Rien à valider sur le thread ${c.thread}.`});
+      s.t2.push({c:"sys", x:"[processus terminé · code 1]"});
+      s.p2 = "dead"; s.ram2 = "libérée, sans avoir rien repris";
+      s.code = ["m3","m4"]; s.codeCls = "hle"; s.blocked = true;
+      s.title = "Mauvais thread : rien à reprendre";
+      s.text = `Aucun checkpoint n'est rangé sous <code>${esc(c.thread)}</code>. <code>get_state</code> renvoie un état vide, sans interruption, et le programme s'arrête : « Rien à valider ». La conversation <code>t-vpn</code> est toujours là, intacte. Mais on ne la retrouve qu'avec son <code>thread_id</code> exact. <b>Remettez t-vpn ci-dessus pour continuer.</b>`;
+      s.choices = true;
+      return;
+    }
+    s.lookup = {thread: "t-vpn", found: true}; s.threadHit = "t-vpn"; s.cpSel = 4;
+    s.code = ["m3"]; s.codeCls = "hlh";
+    s.title = "Retrouver la conversation par le thread_id";
+    s.text = "<code>en_attente()</code> appelle <code>graphe.get_state(config)</code>. LangGraph cherche dans le fichier le <b>dernier checkpoint du thread t-vpn</b> : le #4. Il y trouve <code>next = valider</code> et une interruption en attente, avec sa question. Il y a bien quelque chose à valider.";
+  },
+  /* 11 */ (s, c) => {
+    s.active = "valider"; s.paused = true; s.cpSel = 4; s.threadHit = "t-vpn";
+    s.t2.push({x:`✍️  Décision de marie : ${c.decision === "approuver" ? "approuvé" : "refusé"}`});
+    s.ram2 = "l'état du checkpoint #4, rechargé depuis le disque"; s.inv2 = true;
+    s.code = ["m5","m8"]; s.codeCls = "hlh";
+    const val = c.decision === "approuver" ? '{"action": "approuver", "par": "marie", "motif": ""}' : `{"action": "refuser", "par": "marie", "motif": "${MOTIF}"}`;
+    s.note = {cls:"h", h:`<code>Command(resume=${esc(val)})</code>`};
+    s.title = "invoke(Command(resume=…))";
+    s.text = "Le programme appelle <code>graphe.invoke(Command(resume={...}), config)</code>. On ne renvoie pas le ticket : il est déjà dans l'état. <b>La décision de Marie est la seule information ajoutée.</b> LangGraph recharge l'état du checkpoint #4 et voit que <code>valider</code> doit être relancé.";
+  },
+  /* 12 */ (s, c) => {
+    s.active = "valider"; s.vexec = 2; s.irqAnswered = true; s.cpSel = 4; s.inv2 = true;
+    s.code = ["v1","v2"]; s.codeCls = "hl";
+    const val = c.decision === "approuver" ? '{"action": "approuver", "par": "marie", ...}' : '{"action": "refuser", "par": "marie", ...}';
+    s.note = {cls:"", h:`<b>Deuxième exécution.</b> Cette fois, <code>interrupt()</code> ne s'arrête pas : il renvoie la valeur passée à <code>resume</code>. <code>decision = ${esc(val)}</code>`};
+    s.title = "valider repart du début";
+    s.text = "valider est exécuté <b>une deuxième fois, depuis sa première ligne</b>. Arrivé à <code>interrupt()</code>, LangGraph sait qu'une réponse existe et la renvoie. C'est pour ça que rien d'irréversible ne doit se trouver avant <code>interrupt()</code> : ce code tourne deux fois.";
+  },
+  /* 13 */ (s, c) => {
+    s.clock = "11:32:41"; s.inv2 = true;
+    if (c.decision === "approuver") {
+      step(s, "creer", "e_vc");
+      s.cps.push(cp(5, "après valider", "creer_ticket", Object.assign({}, V1, {valide_par:'"marie"', messages:"4"})));
+      s.chg = ["valide_par"]; s.code = ["v3","v4"]; s.skip = ["v5","v6"];
+      s.title = "Approuvé : direction creer_ticket";
+      s.text = "<code>decision[\"action\"]</code> vaut \"approuver\". valider renvoie <code>Command(goto=\"creer_ticket\", update={\"valide_par\": \"marie\"})</code>. valider est enfin terminé : LangGraph écrit le <b>checkpoint #5</b>.";
+      s.active = "creer"; s.paused = false;
+    } else {
+      step(s, "END", "e_ve");
+      s.cps.push(cp(5, "après valider", "(vide)", Object.assign({}, V1, {messages:"5"})));
+      s.chg = ["messages"]; s.code = ["v3","v5","v6"]; s.skip = ["v4"];
+      s.title = "Refusé : direction END";
+      s.text = "<code>decision[\"action\"]</code> vaut \"refuser\". valider ajoute le message de refus et renvoie <code>Command(goto=END, ...)</code>. Checkpoint #5, avec <code>next</code> vide : le graphe est terminé. Aucun ticket ne sera créé.";
+    }
+    s.codeCls = "hl";
+  },
+  /* 14 */ (s, c) => {
+    s.clock = "11:32:42";
+    if (c.decision === "approuver") {
+      step(s, "END", "e_ce"); s.doneN.includes("creer") || s.doneN.push("creer");
+      s.cps.push(cp(6, "après creer_ticket", "(vide)", Object.assign({}, V1, {valide_par:'"marie"', messages:"5"})));
+      s.tickets.push({id:"NT-0002", txt:"t-vpn · reseau · P1 · N2-infra · validé par marie", fresh:true});
+      s.chg = ["messages"];
+      s.t2.push({c:"good", x:"   🎫 Ticket NT-0002 créé dans la file N2-infra, validé par marie."});
+      s.t2.push({x:"📒 Tickets : data/checkpoints/construction_tickets.json"});
+      s.title = "creer_ticket : l'action à impact";
+      s.text = "Le ticket <b>NT-0002</b> est écrit dans l'ITSM, avec « validé par marie ». Sa clé vient du thread et du texte du ticket : rejouer ne crée pas de doublon. Checkpoint #6, <code>next</code> vide : le graphe est terminé.";
+    } else {
+      s.active = "END";
+      s.t2.push({c:"warn", x:`   🎫 Ticket P1 refusé par marie : ${MOTIF}`});
+      s.title = "Fin, sans ticket";
+      s.text = "Le terminal de Marie affiche le refus et son motif. Le fichier des tickets n'a pas bougé. La conversation reste dans le checkpointer, avec le message de refus.";
+    }
+    s.t2.push({x:"🔭 Langfuse › Sessions › t-vpn"});
+    s.code = ["m8"];
+  },
+  /* 15 */ (s, c) => {
+    s.active = "END"; if (!s.doneN.includes("END")) s.doneN.push("END"); s.active = null;
+    s.t2.push({c:"sys", x:"[processus terminé · code 0]"});
+    s.p2 = "dead"; s.ram2 = "libérée";
+    s.title = "Bilan";
+    s.text = "Une conversation, deux processus, deux heures d'écart, deux personnes. Le seul lien entre les deux exécutions, c'est le <code>thread_id</code>, qui désigne une suite de checkpoints dans le fichier. Dans Langfuse › Sessions › t-vpn : <b>deux traces, une seule conversation</b>.";
+  },
+];
+const N = STEPS.length - 1;
+
+/* ---------- état de lecture ---------- */
+const ctx = { decision: "approuver", thread: "t-vpn" };
+let idx = 0, prevIdx = -1, playing = false, timer = null, prevModel = null;
+const seen = new Set([0]);
+
+function build(i){
+  const s = initial();
+  for (let k = 0; k <= i; k++){ resetTransient(s); s.phase = PHASE[k]; STEPS[k](s, ctx); if (s.blocked && k < i) return {s, stoppedAt:k}; }
+  return {s, stoppedAt: s.blocked ? i : null};
+}
+
+/* ---------- rendu ---------- */
+function renderGraph(s){
+  ["START","trier","agent","tools","valider","creer","END"].forEach(n => {
+    const g = $("n-" + n); g.classList.remove("on","done","paused");
+    if (s.active === n) g.classList.add(s.paused && n === "valider" ? "paused" : "on");
+    else if (s.doneN.includes(n)) g.classList.add("done");
+  });
+  ["e_st","e_ta","e_at","e_tt","e_av","e_ac","e_vc","e_ve","e_ce"].forEach(e => {
+    const p = $(e); p.classList.remove("on","trail");
+    if (s.edge === e) p.classList.add("on"); else if (s.trail.includes(e)) p.classList.add("trail");
+  });
+  $("pausebadge").classList.toggle("show", !!(s.paused && s.active === "valider"));
+  $("vcount").textContent = s.vexec ? `exécuté ${s.vexec} fois` : "";
+}
+
+function renderStore(s, fresh){
+  let h = "";
+  if (s.lookup){
+    const q = `graphe.get_state({"configurable": {"thread_id": "${esc(s.lookup.thread)}"}})`;
+    h += s.lookup.found
+      ? `<div class="query">${q}<span class="res">→ dernier checkpoint du thread : <b>#4</b> · next = valider · 1 interruption en attente</span></div>`
+      : `<div class="query miss">${q}<span class="res">→ aucun checkpoint sous ce nom · état vide · <b>aucune interruption</b></span></div>`;
+  }
+  h += `<div class="thread other"><div class="th"><span>thread_id <b>t-imprimante</b></span><span>6 checkpoints · terminé</span></div></div>`;
+  const hit = s.threadHit === "t-vpn" && s.lookup && s.lookup.found;
+  h += `<div class="thread${hit ? " hit" : ""}"><div class="th"><span>thread_id <b>t-vpn</b></span><span>${s.cps.length} checkpoint${s.cps.length > 1 ? "s" : ""}</span></div>`;
+  if (!s.cps.length) h += `<div class="empty">Aucun checkpoint pour l'instant.</div>`;
+  else {
+    const sel = s.cpSel != null ? s.cpSel : s.cps.length - 1;
+    h += `<ol class="cps">` + s.cps.map((c, i) => {
+      const irq = c.irq ? `<span class="irq${s.irqAnswered ? " done" : ""}">⏸ interruption : « Créer ce ticket P1 ? »${s.irqAnswered ? " (répondue)" : " en attente"}</span>` : "";
+      return `<li class="${i === sel ? "sel" : ""}${fresh.cps != null && i >= fresh.cps ? " fresh" : ""}"><span class="n">#${c.n}</span><span>${c.label}</span><span class="nx">next → ${c.next}</span>${irq}</li>`;
+    }).join("") + `</ol>`;
+  }
+  h += `</div>`;
+  if (s.cps.length){
+    const sel = s.cpSel != null ? s.cpSel : s.cps.length - 1;
+    const c = s.cps[sel];
+    h += `<div class="snap"><h3>Contenu du checkpoint #${c.n}${sel === s.cps.length - 1 ? " (le plus récent)" : ""}</h3><dl class="kv">`;
+    const isLatest = sel === s.cps.length - 1;
+    for (const [k, v] of Object.entries(c.values)) h += `<dt>${k}</dt><dd class="${isLatest && s.chg.includes(k) ? "chg" : ""}">${esc(k === "messages" ? v + " message" + (v === "1" || v === "0" ? "" : "s") : v)}</dd>`;
+    h += `<dt>next</dt><dd>${c.next === "(vide)" ? "() : terminé" : "(\"" + c.next + "\",)"}</dd></dl>`;
+    if (c.irq && !s.irqAnswered) h += `<div class="irqbox"><b>tasks[0] = valider · interrupts</b><br>{"question": "Créer ce ticket P1 ?", "categorie": "reseau", "file": "N2-infra"}</div>`;
+    h += `</div>`;
+  }
+  h += `<div class="itsm"><h3>construction_tickets.json (l'ITSM)</h3><ul>` +
+    s.tickets.map(t => `<li class="${t.fresh ? "newt" + (fresh.ticket ? " fresh" : "") : ""}">${t.id} · ${esc(t.txt)}</li>`).join("") + `</ul></div>`;
+  $("store").innerHTML = h;
+}
+
+function renderCode(s){
+  document.querySelectorAll("pre.code .ln").forEach(l => {
+    const id = l.dataset.l; l.className = "ln";
+    if (s.code.includes(id)) l.classList.add(s.codeCls);
+    else if (s.skip.includes(id)) l.classList.add("skip");
+  });
+  $("vbadge").textContent = s.vexec ? `exécutions : ${s.vexec}` : "";
+  $("note").innerHTML = s.note ? `<div class="note ${s.note.cls}">${s.note.h}</div>` : "";
+}
+
+function renderTerm(n, lines, state, ram, invoking, freshFrom){
+  const t = $("term" + n);
+  t.classList.toggle("idle", state === "idle");
+  const pill = $("pill" + n);
+  pill.className = "pill" + (state === "run" ? " run" : state === "dead" ? " dead" : "");
+  pill.textContent = state === "run" ? (n === 1 ? "actif · PID 4812" : "actif · PID 7730") : state === "dead" ? "terminé" : "pas lancé";
+  $("ram" + n).innerHTML = `Mémoire du processus : <b>${esc(ram)}</b>`;
+  let h = lines.map((l, i) => `<div class="${l.c || ""}${i >= freshFrom ? " fresh" : ""}">${esc(l.x)}</div>`).join("");
+  if (invoking) h += `<div class="spin">   invoke() en cours, le terminal attend</div>`;
+  if (!lines.length) h = `<div class="sys">${n === 1 ? "Le support va lancer la demande." : "Marie n'a encore rien lancé."}</div>`;
+  $("tb" + n).innerHTML = h;
+}
+
+let clockAnim = null;
+function toSec(t){ const [h,m,s] = t.split(":").map(Number); return h*3600 + m*60 + s; }
+function fmt(x){ const h = Math.floor(x/3600), m = Math.floor(x%3600/60), s = Math.floor(x%60); return [h,m,s].map(v => String(v).padStart(2,"0")).join(":"); }
+function setClock(s, animate){
+  cancelAnimationFrame(clockAnim);
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (animate && !reduce){
+    const a = toSec("09:14:09"), b = toSec(s.clock), t0 = performance.now(), D = 2600;
+    const tick = now => {
+      const p = Math.min(1, (now - t0) / D), e = 1 - Math.pow(1 - p, 3), cur = a + (b - a) * e;
+      $("clock").textContent = fmt(cur);
+      const g = Math.round((cur - a) / 60); $("clockgap").textContent = `+${Math.floor(g/60)} h ${String(g%60).padStart(2,"0")} min`;
+      if (p < 1) clockAnim = requestAnimationFrame(tick);
+    };
+    clockAnim = requestAnimationFrame(tick);
+  } else { $("clock").textContent = s.clock; $("clockgap").textContent = s.gap; }
+}
+
+function render(){
+  const {s, stoppedAt} = build(idx);
+  const forward = idx === prevIdx + 1;
+  const pm = forward ? prevModel : null;
+  const fresh = { cps: pm ? pm.cps.length : null, ticket: !!(pm && pm.tickets.length < s.tickets.length) };
+
+  $("stepno").textContent = `Étape ${idx} / ${N}`;
+  const chip = $("phasechip"); chip.className = "phase-chip " + PHASE[idx]; chip.textContent = PH[PHASE[idx]];
+  $("captitle").textContent = s.title;
+  $("captext").innerHTML = s.text;
+  $("choices").hidden = !s.choices;
+  $("dApprove").setAttribute("aria-pressed", ctx.decision === "approuver");
+  $("dRefuse").setAttribute("aria-pressed", ctx.decision === "refuser");
+  if (document.activeElement !== $("threadIn")) $("threadIn").value = ctx.thread;
+
+  $("marker").style.left = `calc(${MARK[idx]}% - 1.5px)`;
+  $("seg1").classList.toggle("dim", PHASE[idx] === "pz" || PHASE[idx] === "p2");
+  $("segz").classList.toggle("dim", PHASE[idx] !== "pz");
+  $("seg2").classList.toggle("dim", PHASE[idx] !== "p2");
+
+  setClock(s, forward && idx === 8);
+  renderGraph(s);
+  renderStore(s, fresh);
+  renderCode(s);
+  renderTerm(1, s.t1, s.p1, s.ram1, s.inv1, pm ? pm.t1.length : 1e9);
+  renderTerm(2, s.t2, s.p2, s.ram2, s.inv2, pm ? pm.t2.length : 1e9);
+  $("veil").classList.toggle("show", !!s.veil);
+
+  const blocked = stoppedAt != null;
+  $("bPrev").disabled = idx === 0;
+  $("bNext").disabled = idx === N || blocked;
+  $("bPlay").disabled = idx === N || blocked;
+  seen.add(idx);
+  $("dots").querySelectorAll(".dot").forEach((d, i) => {
+    d.classList.toggle("cur", i === idx);
+    d.classList.toggle("seen", seen.has(i));
+    d.disabled = blocked && i > idx;
+  });
+  if ((idx === N || blocked) && playing) stop();
+  prevModel = s; prevIdx = idx;
+}
+
+/* ---------- commandes ---------- */
+const DUR = i => i === 0 ? 4000 : i === 8 ? 6500 : i === 9 ? 7000 : i === 12 ? 7500 : i === 6 ? 7000 : 5500;
+function go(i){ idx = Math.max(0, Math.min(N, i)); render(); if (playing) schedule(); }
+function schedule(){ clearTimeout(timer); timer = setTimeout(() => { if (idx < N) { idx++; render(); if (playing) schedule(); } }, DUR(idx)); }
+function play(){ if (idx === N) return; playing = true; $("bPlay").textContent = "❚❚ Pause"; schedule(); }
+function stop(){ playing = false; clearTimeout(timer); $("bPlay").textContent = "▶ Lecture"; }
+
+$("dots").innerHTML = PHASE.map((p, i) => `<button class="dot ${p}" aria-label="Aller à l'étape ${i}" data-i="${i}"></button>`).join("");
+$("dots").addEventListener("click", e => { const b = e.target.closest(".dot"); if (b && !b.disabled){ stop(); prevIdx = -2; go(+b.dataset.i); } });
+$("bNext").onclick = () => { stop(); go(idx + 1); };
+$("bPrev").onclick = () => { stop(); prevIdx = -2; go(idx - 1); };
+$("bPlay").onclick = () => playing ? stop() : play();
+$("bReset").onclick = () => { stop(); ctx.decision = "approuver"; ctx.thread = "t-vpn"; seen.clear(); prevIdx = -2; go(0); };
+const rerender = () => { prevIdx = -2; render(); };
+$("dApprove").onclick = () => { ctx.decision = "approuver"; rerender(); };
+$("dRefuse").onclick  = () => { ctx.decision = "refuser"; rerender(); };
+$("typo").onclick = () => { ctx.thread = ctx.thread === "t-vpn" ? "t-vnp" : "t-vpn"; $("threadIn").value = ctx.thread; $("typo").textContent = ctx.thread === "t-vpn" ? "Essayer « t-vnp »" : "Remettre « t-vpn »"; if (idx < 9) idx = 9; rerender(); };
+$("threadIn").addEventListener("input", e => {
+  ctx.thread = e.target.value.replace(/[^\w-]/g, "").slice(0, 20) || "t-";
+  $("typo").textContent = ctx.thread === "t-vpn" ? "Essayer « t-vnp »" : "Remettre « t-vpn »";
+  rerender();
+});
+document.addEventListener("keydown", e => {
+  if (e.target.matches("input,textarea")) return;
+  if (e.key === "ArrowRight" && !$("bNext").disabled){ e.preventDefault(); stop(); go(idx + 1); }
+  else if (e.key === "ArrowLeft" && idx > 0){ e.preventDefault(); stop(); prevIdx = -2; go(idx - 1); }
+  else if (e.key === " " && !e.target.matches("button")){ e.preventDefault(); playing ? stop() : play(); }
+});
+
+render();
+})();
+</script>
+</body>
+</html>

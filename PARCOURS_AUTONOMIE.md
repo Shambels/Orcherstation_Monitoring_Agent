@@ -39,6 +39,8 @@ service extérieur.
 
 Les points 1 à 6 rendent tout le reste lisible : ne les sautez pas.
 
+Pour le point 3, commencez par l'animation `comprendre/interrupt_reprise.html` : elle montre pas à pas la pause, le checkpoint retrouvé par le `thread_id` et la reprise par une autre personne.
+
 ## 2. Aller plus loin : ce qu'on n'a pas fait ensemble
 
 | # | Sujet | Notebook | Exercice |

@@ -41,6 +41,7 @@ Le J4, à la demande du formateur : `bash infrastructure/vllm_mode.sh juge` (le 
 | --- | --- |
 | `notebooks/` | un notebook par séquence (`J0_01` pour le chapitre 0, puis `J1_01` …) |
 | `exercices/enonces/` | exercices de la semaine |
+| `comprendre/` | animations pas à pas des mécanismes difficiles (interrupt et reprise…), à ouvrir dans le navigateur |
 | `src/helpdesk_ops/` | code partagé par les notebooks |
 | `infrastructure/` | Docker Compose, `.env` généré, scripts d'installation et `smoke_test.py` |
 | `data/` | base de connaissances, jeux d'évaluation |
