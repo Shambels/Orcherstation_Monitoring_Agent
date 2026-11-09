@@ -1,0 +1,910 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Persistance et time travel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+[hidden]{display:none !important}
+/* Layout : un lecteur pas à pas. En haut la frise des cinq phases, puis la narration,
+   puis le graphe et la sauvegarde affichée à gauche, le checkpointer (deux threads côte à côte) à droite,
+   enfin le code et le terminal. */
+:root{
+  --bg:#eef1f6; --surface:#ffffff; --surface-2:#e6eaf1; --line:#d2d9e4; --line-strong:#9aa6b8;
+  --fg:#121924; --muted:#576377;
+  --run:#2353cc; --run-soft:#dfe7fb; --on-run:#ffffff;
+  --pause:#a86400; --pause-soft:#fcefd8;
+  --disk:#0b7a68; --disk-soft:#dcf2ed;
+  --human:#b0236a; --human-soft:#f9e1ee;
+  --err:#c42b2b; --err-soft:#fbe3e3;
+  --term-bg:#0d1218; --term-fg:#d9e0ea; --term-muted:#7f8a9b; --term-line:#202a36;
+  --f-display:"IBM Plex Sans Condensed","Arial Narrow",system-ui,sans-serif;
+  --f-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,"Cascadia Mono",Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0c1016; --surface:#141a23; --surface-2:#1b2330; --line:#29323f; --line-strong:#56637a;
+  --fg:#e5eaf2; --muted:#94a1b5;
+  --run:#7aa2ff; --run-soft:#1c2a4a; --on-run:#0b1222;
+  --pause:#f0b03a; --pause-soft:#3a2b10;
+  --disk:#3fc8b0; --disk-soft:#0f2e2a;
+  --human:#f27bb4; --human-soft:#3a1529;
+  --err:#ff7676; --err-soft:#3a1515;
+  --term-bg:#06090d; --term-fg:#d9e0ea; --term-muted:#7f8a9b; --term-line:#1a222d;
+  color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --bg:#0c1016; --surface:#141a23; --surface-2:#1b2330; --line:#29323f; --line-strong:#56637a;
+  --fg:#e5eaf2; --muted:#94a1b5;
+  --run:#7aa2ff; --run-soft:#1c2a4a; --on-run:#0b1222;
+  --pause:#f0b03a; --pause-soft:#3a2b10;
+  --disk:#3fc8b0; --disk-soft:#0f2e2a;
+  --human:#f27bb4; --human-soft:#3a1529;
+  --err:#ff7676; --err-soft:#3a1515;
+  --term-bg:#06090d; --term-fg:#d9e0ea; --term-muted:#7f8a9b; --term-line:#1a222d;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:15px;line-height:1.5}
+.app{max-width:1440px;margin:0 auto;padding-block:20px 48px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
+  display:flex;flex-direction:column;gap:14px}
+code,.mono{font-family:var(--f-mono);font-size:.9em}
+p code,.cap-text code,.lesson code{background:var(--surface-2);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+
+/* En-tête */
+.top{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;justify-content:space-between}
+.top h1{font-family:var(--f-display);font-weight:700;font-size:clamp(26px,3.2vw,38px);line-height:1.05;margin:0;text-wrap:balance;letter-spacing:-.01em}
+.top .sub{color:var(--muted);margin:6px 0 0;max-width:78ch}
+.saverbox{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px 16px}
+.saverbox .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted)}
+.saverbox .t{font-family:var(--f-mono);font-size:22px;font-weight:600}
+.saverbox .t.none{color:var(--muted)}
+.saverbox .t.mem{color:var(--pause)}
+.saverbox .t.sqlite{color:var(--disk)}
+.saverbox .w{font-size:12.5px;color:var(--muted)}
+
+/* Frise */
+.timeline{position:relative;display:grid;grid-template-columns:10fr 34fr 16fr 28fr 12fr;gap:4px;padding-top:4px}
+.seg{border-radius:6px;padding:7px 10px;font-size:12.5px;line-height:1.25;border:1px solid transparent;min-width:0}
+.seg b{display:block;font-family:var(--f-display);font-size:14px;font-weight:600;overflow-wrap:anywhere}
+.seg span{color:var(--muted)}
+.seg.a{background:var(--surface-2);border-color:var(--line)}
+.seg.s{background:var(--run-soft);border-color:color-mix(in srgb,var(--run) 35%,transparent)}
+.seg.t{background:var(--disk-soft);border-color:color-mix(in srgb,var(--disk) 35%,transparent)}
+.seg.v{background:var(--human-soft);border-color:color-mix(in srgb,var(--human) 35%,transparent)}
+.seg.r{background:var(--err-soft);border-color:color-mix(in srgb,var(--err) 35%,transparent)}
+.seg.dim{opacity:.45}
+.marker{position:absolute;top:-6px;bottom:-6px;width:3px;background:var(--fg);border-radius:2px;transition:left .5s ease;pointer-events:none}
+.marker::before{content:"";position:absolute;top:-5px;left:-5px;border:6.5px solid transparent;border-top-color:var(--fg)}
+
+/* Narration + commandes */
+.stage{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px;align-items:start;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 20px}
+.cap-step{font-size:12px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.phase-chip{font-weight:600;padding:2px 8px;border-radius:99px;letter-spacing:.05em}
+.phase-chip.a,.phase-chip.b{background:var(--surface-2);color:var(--muted)}
+.phase-chip.s{background:var(--run-soft);color:var(--run)}
+.phase-chip.t{background:var(--disk-soft);color:var(--disk)}
+.phase-chip.v{background:var(--human-soft);color:var(--human)}
+.phase-chip.r{background:var(--err-soft);color:var(--err)}
+.cap-title{font-family:var(--f-display);font-size:clamp(22px,2.4vw,28px);font-weight:700;margin:4px 0 6px;line-height:1.15;text-wrap:balance}
+.cap-text{font-size:16.5px;max-width:80ch;margin:0}
+.cap-text b{font-weight:600}
+.choices{display:flex;flex-wrap:wrap;gap:14px 22px;margin-top:12px;padding:12px 14px;border:1px dashed var(--human);border-radius:10px;background:var(--human-soft)}
+.choices .grp{display:flex;flex-direction:column;gap:6px;min-width:0}
+.choices .grp>span{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--human);font-weight:600}
+.seg-btns{display:flex;gap:6px;flex-wrap:wrap}
+.seg-btns button{font:inherit;font-size:14px;padding:6px 12px;border-radius:7px;border:1px solid var(--line-strong);background:var(--surface);color:var(--fg);cursor:pointer;text-align:left}
+.seg-btns button small{display:block;font-size:12px;color:var(--muted)}
+.seg-btns button[aria-pressed="true"]{background:var(--human);border-color:var(--human);color:var(--surface)}
+.seg-btns button[aria-pressed="true"] small{color:var(--surface);opacity:.85}
+.controls{display:flex;flex-direction:column;gap:10px;align-items:flex-end}
+.btns{display:flex;gap:6px;flex-wrap:wrap}
+.btn{font:inherit;font-weight:600;font-size:14px;padding:9px 14px;border-radius:8px;border:1px solid var(--line-strong);background:var(--surface);color:var(--fg);cursor:pointer;white-space:nowrap}
+.btn.primary{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.btn:disabled{opacity:.35;cursor:not-allowed}
+.btn:focus-visible,.dot:focus-visible,.seg-btns button:focus-visible,.cps li:focus-visible{outline:3px solid var(--run);outline-offset:2px}
+.dots{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;max-width:330px}
+.dot{width:17px;height:17px;border-radius:4px;border:1px solid var(--line-strong);background:var(--surface);cursor:pointer;padding:0}
+.dot.s{border-color:var(--run)} .dot.t{border-color:var(--disk)} .dot.v{border-color:var(--human)} .dot.r{border-color:var(--err)}
+.dot.seen.a,.dot.seen.b{background:var(--surface-2)} .dot.seen.s{background:var(--run-soft)} .dot.seen.t{background:var(--disk-soft)} .dot.seen.v{background:var(--human-soft)} .dot.seen.r{background:var(--err-soft)}
+.dot.cur{outline:2px solid var(--fg);outline-offset:1px}
+.hint{font-size:12px;color:var(--muted)}
+
+/* Vues */
+.views{display:grid;grid-template-columns:minmax(250px,.72fr) minmax(0,1.7fr);gap:14px;align-items:start}
+.leftcol{display:flex;flex-direction:column;gap:14px;min-width:0}
+.views2{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:14px;align-items:start}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px;min-width:0}
+.panel h2{font-family:var(--f-display);font-size:15px;font-weight:600;margin:0 0 2px;text-transform:uppercase;letter-spacing:.06em}
+.panel .ph{font-size:12.5px;color:var(--muted);margin:0 0 10px}
+
+/* Graphe */
+#graph{width:100%;max-width:300px;display:block;margin:0 auto}
+#graph text{font-family:var(--f-mono);font-size:13px;fill:var(--fg)}
+#graph .elab{font-size:10.5px;fill:var(--muted);font-family:var(--f-body)}
+.edge{stroke:var(--line-strong);stroke-width:1.8;fill:none;marker-end:url(#arr)}
+.edge.trail{stroke:var(--run);opacity:.55;marker-end:url(#arrRun)}
+.edge.on{stroke:var(--run);stroke-width:3;opacity:1;stroke-dasharray:7 5;animation:flow .7s linear infinite;marker-end:url(#arrRun)}
+@keyframes flow{to{stroke-dashoffset:-12}}
+.node rect,.node circle{fill:var(--surface);stroke:var(--line-strong);stroke-width:1.6;transition:fill .3s,stroke .3s}
+.node.done rect,.node.done circle{fill:var(--run-soft);stroke:var(--run)}
+.node.on rect,.node.on circle{fill:var(--run);stroke:var(--run)}
+.node.on text{fill:var(--on-run)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--muted);margin-top:6px;justify-content:center}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:-2px;margin-right:5px;border:1.5px solid}
+.lg-on{background:var(--run);border-color:var(--run)} .lg-done{background:var(--run-soft);border-color:var(--run)}
+.cpflash{font-size:12.5px;text-align:center;color:var(--disk);min-height:1.5em;margin-top:4px;font-weight:600}
+
+/* Snapshot */
+.snap .kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:3px 12px;font-family:var(--f-mono);font-size:12px}
+.kv dt{color:var(--muted)} .kv dd{margin:0;overflow-wrap:anywhere}
+.kv dt.sub{padding-left:12px}
+.kv dd.chg{color:var(--disk);font-weight:600}
+.snap-h{font-size:12.5px;margin:0 0 8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.empty{font-size:12.5px;color:var(--muted);font-style:italic;margin-top:6px}
+
+/* Checkpointer */
+.disk-h{display:flex;align-items:center;gap:8px}
+.disk-h svg{flex:none}
+.query{font-family:var(--f-mono);font-size:12.5px;border-radius:8px;padding:8px 10px;margin-bottom:10px;border:1.5px solid var(--disk);background:var(--disk-soft);overflow-wrap:anywhere}
+.query.miss{border-color:var(--err);background:var(--err-soft)}
+.query.tt{border-color:var(--human);background:var(--human-soft)}
+.query .res{display:block;margin-top:4px;font-family:var(--f-body);font-size:13px}
+.threads{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;align-items:start}
+.thread{border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:0}
+.thread .th{font-size:13px;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.thread .th b{font-family:var(--f-mono);font-weight:600}
+.thread.hit{border:2px solid var(--disk);box-shadow:0 0 0 4px var(--disk-soft)}
+.thread.gone{border:2px dashed var(--err)}
+.grp-h{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:8px 0 3px;font-weight:600}
+.grp-h.br{color:var(--human)}
+.cps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:3px}
+.cps.br{margin-left:12px;padding-left:8px;border-left:2px dashed var(--human)}
+.cps li{display:grid;grid-template-columns:22px 34px minmax(0,1fr) auto;gap:6px;align-items:center;font-size:12.5px;padding:3px 6px;border-radius:6px;background:var(--surface-2);cursor:pointer}
+.cps li:hover{outline:1px solid var(--line-strong)}
+.cps li.sel{background:var(--disk-soft);outline:1.5px solid var(--disk)}
+.cps li.src{outline:2.5px solid var(--human);background:var(--human-soft)}
+.cps .rk{font-family:var(--f-mono);font-size:10.5px;font-weight:600;color:var(--surface);background:var(--muted);border-radius:4px;text-align:center;line-height:16px}
+.cps .rk:empty{background:transparent}
+.cps .rk.first{background:var(--disk)}
+.cps .n{font-family:var(--f-mono);font-weight:600;color:var(--disk);text-align:right}
+.cps .lb{min-width:0;overflow-wrap:anywhere}
+.cps .lb small{display:block;font-family:var(--f-mono);font-size:10.5px;color:var(--muted)}
+.cps .nx{font-family:var(--f-mono);color:var(--muted);font-size:11px;text-align:right}
+.srcc{font-family:var(--f-mono);font-size:10.5px;padding:0 5px;border-radius:4px;margin-left:4px;border:1px solid var(--line-strong);color:var(--muted)}
+.srcc.loop{border-color:var(--run);color:var(--run)}
+.srcc.update,.srcc.fork{border-color:var(--human);color:var(--human);font-weight:600}
+.latest{font-size:10.5px;font-weight:600;color:var(--disk);margin-left:4px;white-space:nowrap}
+.legend2{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;color:var(--muted);margin-top:10px}
+
+/* Code */
+.code-h{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:10px 0 4px;font-weight:600}
+.code-h:first-of-type{margin-top:0}
+pre.code{margin:0;background:var(--surface-2);border-radius:8px;padding:6px 0;overflow-x:auto;font-family:var(--f-mono);font-size:12.3px;line-height:1.6}
+pre.code .ln{display:block;padding:0 12px;white-space:pre;border-left:3px solid transparent;transition:background .25s}
+pre.code .ln.hl{background:var(--run-soft);border-left-color:var(--run)}
+pre.code .ln.hlv{background:var(--human-soft);border-left-color:var(--human)}
+pre.code .ln.hld{background:var(--disk-soft);border-left-color:var(--disk)}
+pre.code .ln.hle{background:var(--err-soft);border-left-color:var(--err)}
+.k{color:var(--human)} .s{color:var(--disk)} .f{color:var(--run)} .c{color:var(--muted);font-style:italic}
+.note{margin-top:8px;border-radius:8px;padding:8px 11px;font-size:13.5px;border:1.5px solid var(--run);background:var(--run-soft)}
+.note.p{border-color:var(--pause);background:var(--pause-soft)}
+.note.h{border-color:var(--human);background:var(--human-soft)}
+
+/* Terminal */
+.term{background:var(--term-bg);color:var(--term-fg);border-radius:12px;overflow:hidden;border:1px solid var(--term-line);min-width:0;display:flex;flex-direction:column}
+.term-h{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 14px;border-bottom:1px solid var(--term-line);font-size:13px}
+.term-h .who{font-weight:600}
+.term-h .who small{font-weight:400;color:var(--term-muted)}
+.pill{font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:99px;text-transform:uppercase;letter-spacing:.05em;background:#222b37;color:var(--term-muted)}
+.pill.run{background:#173a2f;color:#5fe0b5}
+.pill.py{background:#3a1d33;color:#ff9fd0}
+.pill.dead{background:#2a2f38;color:#b8c2d0}
+.term-b{padding:10px 14px 14px;font-family:var(--f-mono);font-size:12.6px;line-height:1.6;min-height:260px;max-height:520px;overflow:auto}
+.term-b div{white-space:pre-wrap;overflow-wrap:anywhere}
+.term-b .cmd{color:#9cc2ff}
+.term-b .sys{color:var(--term-muted);font-style:italic}
+.term-b .warn{color:#ffc561}
+.term-b .bad{color:#ff8f8f}
+.term-b .good{color:#78e2bd}
+.term-f{padding:8px 14px;border-top:1px solid var(--term-line);font-size:12px;color:var(--term-muted)}
+.fresh{animation:fresh .45s ease both}
+@keyframes fresh{from{opacity:0;transform:translateY(5px)}}
+
+/* À retenir */
+.lessons{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+.lesson{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px;min-width:0}
+.lesson .n{font-family:var(--f-display);font-weight:700;font-size:13px;color:var(--muted);letter-spacing:.06em}
+.lesson h3{font-family:var(--f-display);font-size:18px;margin:2px 0 6px;line-height:1.2}
+.lesson p{margin:0;font-size:14px;color:var(--muted)}
+.lesson p code{color:var(--fg)}
+.sect-h{font-family:var(--f-display);font-size:20px;font-weight:700;margin:10px 0 0}
+
+@media (max-width:1180px){
+  .views{grid-template-columns:minmax(0,1fr)}
+  .leftcol{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  .views2{grid-template-columns:minmax(0,1fr)}
+  .lessons{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:760px){
+  .stage{grid-template-columns:minmax(0,1fr);padding:14px}
+  .controls{align-items:stretch}
+  .dots{justify-content:flex-start;max-width:none}
+  .leftcol,.threads,.lessons{grid-template-columns:minmax(0,1fr)}
+  .timeline{grid-template-columns:repeat(5,minmax(0,1fr))}
+  .seg{padding:6px 5px}
+  .seg b{font-size:12px}
+  .seg span{display:none}
+  .btn{padding:9px 10px}
+}
+@media (prefers-reduced-motion:reduce){
+  *{animation:none !important;transition:none !important}
+}
+</style>
+</head>
+<body>
+
+<div class="app">
+  <header class="top">
+    <div>
+      <h1>Persistance et voyage dans le temps, pas à pas</h1>
+      <p class="sub">Le checkpointer sauvegarde chaque étape du graphe, comme les sauvegardes d'un jeu vidéo. On relit ces sauvegardes, on repart d'une sauvegarde passée, on efface une conversation. Le code est celui de <code>construction/etape_04_memoire.py</code> et du notebook J2-01 (<code>notebooks/_sources/build_j2_01.py</code>).</p>
+    </div>
+    <div class="saverbox" aria-label="Checkpointer branché">
+      <span class="lbl">Checkpointer</span>
+      <span class="t none" id="saverName">aucun</span>
+      <span class="w" id="saverWhere">rien n'est sauvegardé</span>
+    </div>
+  </header>
+
+  <div class="timeline" aria-hidden="true">
+    <div class="seg a" id="seg0"><b>Avant</b><span>pas de mémoire</span></div>
+    <div class="seg s" id="seg1"><b>Sauvegardes</b><span>un checkpoint par super-step</span></div>
+    <div class="seg t" id="seg2"><b>Threads</b><span>une conversation par thread_id</span></div>
+    <div class="seg v" id="seg3"><b>Voyage dans le temps</b><span>repartir d'une sauvegarde, créer une branche</span></div>
+    <div class="seg r" id="seg4"><b>RGPD</b><span>effacer le thread</span></div>
+    <div class="marker" id="marker"></div>
+  </div>
+
+  <section class="stage" aria-live="polite">
+    <div>
+      <div class="cap-step"><span id="stepno">Étape 0 / 16</span><span class="phase-chip a" id="phasechip">Avant</span></div>
+      <h2 class="cap-title" id="captitle"></h2>
+      <p class="cap-text" id="captext"></p>
+      <div class="choices" id="choices" hidden>
+        <div class="grp" id="grpThread">
+          <span>Le thread du deuxième message</span>
+          <div class="seg-btns">
+            <button type="button" id="cSame" aria-pressed="true">--thread conv-42<small>le même thread</small></button>
+            <button type="button" id="cNew" aria-pressed="false">--thread conv-43<small>un nouveau thread</small></button>
+          </div>
+        </div>
+        <div class="grp" id="grpCp">
+          <span>La sauvegarde de départ (thread conv-42)</span>
+          <div class="seg-btns">
+            <button type="button" id="cpA" aria-pressed="true">step 0 · next trier<small>corriger le ticket (update_state)</small></button>
+            <button type="button" id="cpB" aria-pressed="false">step 1 · next agent<small>rejouer tel quel (invoke None)</small></button>
+            <button type="button" id="cpC" aria-pressed="false">step 3 · next agent<small>rejouer après l'outil (invoke None)</small></button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="controls">
+      <div class="btns">
+        <button class="btn" id="bReset" title="Recommencer">⟲</button>
+        <button class="btn" id="bPrev">◀ Précédent</button>
+        <button class="btn primary" id="bPlay">▶ Lecture</button>
+        <button class="btn" id="bNext">Suivant ▶</button>
+      </div>
+      <div class="dots" id="dots"></div>
+      <div class="hint">Clavier : ← → pour avancer, espace pour lecture/pause</div>
+    </div>
+  </section>
+
+  <div class="views">
+    <div class="leftcol">
+      <section class="panel">
+        <h2>Le graphe</h2>
+        <p class="ph">Celui de l'étape 4. Le nœud en cours, le chemin parcouru pendant l'<code>invoke()</code>.</p>
+        <svg id="graph" viewBox="0 0 300 310" role="img" aria-label="Graphe : START, trier, agent, tools, END">
+          <defs>
+            <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" style="fill:var(--line-strong)"/></marker>
+            <marker id="arrRun" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" style="fill:var(--run)"/></marker>
+          </defs>
+          <path class="edge" id="e_st" d="M120 34 L120 61"/>
+          <path class="edge" id="e_ta" d="M120 103 L120 141"/>
+          <path class="edge" id="e_at" d="M175 155 L208 155"/>
+          <path class="edge" id="e_tt" d="M208 172 L175 172"/>
+          <path class="edge" id="e_ae" d="M120 183 L120 262"/>
+          <text class="elab" x="180" y="146">outil ?</text>
+          <text class="elab" x="126" y="228">pas d'outil</text>
+          <g class="node" id="n-START"><circle cx="120" cy="22" r="10"/><text x="138" y="26" class="elab">START</text></g>
+          <g class="node" id="n-trier"><rect x="65" y="63" width="110" height="40" rx="8"/><text x="120" y="88" text-anchor="middle">trier</text></g>
+          <g class="node" id="n-agent"><rect x="65" y="143" width="110" height="40" rx="8"/><text x="120" y="168" text-anchor="middle">agent</text></g>
+          <g class="node" id="n-tools"><rect x="210" y="143" width="80" height="40" rx="8"/><text x="250" y="168" text-anchor="middle">tools</text></g>
+          <g class="node" id="n-END"><circle cx="120" cy="276" r="12"/><text x="140" y="280" class="elab">END</text></g>
+        </svg>
+        <div class="legend"><span><i class="lg-on"></i>en cours</span><span><i class="lg-done"></i>déjà exécuté</span></div>
+        <div class="cpflash" id="cpflash"></div>
+      </section>
+
+      <section class="panel snap">
+        <h2>La sauvegarde affichée</h2>
+        <p class="ph">Le <code>StateSnapshot</code> que rendrait <code>get_state</code> avec ce <code>checkpoint_id</code>. En vert : ce qui a changé depuis le parent.</p>
+        <div id="snap"></div>
+      </section>
+    </div>
+
+    <section class="panel">
+      <div class="disk-h">
+        <svg width="22" height="26" viewBox="0 0 22 26" aria-hidden="true"><ellipse cx="11" cy="5" rx="9" ry="3.5" style="fill:var(--disk-soft);stroke:var(--disk)" stroke-width="1.6"/><path d="M2 5v16c0 2 4 3.5 9 3.5s9-1.5 9-3.5V5" style="fill:none;stroke:var(--disk)" stroke-width="1.6"/><path d="M2 13c0 2 4 3.5 9 3.5s9-1.5 9-3.5" style="fill:none;stroke:var(--disk)" stroke-width="1.6"/></svg>
+        <h2>Le checkpointer</h2>
+      </div>
+      <p class="ph" id="storeph"></p>
+      <div id="store"></div>
+      <div class="legend2"><span><span class="srcc">input</span> entrée reçue</span><span><span class="srcc loop">loop</span> après un super-step</span><span><span class="srcc update">update</span> écrit par update_state</span><span><span class="srcc fork">fork</span> copie d'une sauvegarde passée</span><span>Cliquez une ligne pour l'afficher.</span></div>
+    </section>
+  </div>
+
+  <div class="views2">
+    <section class="panel">
+      <h2>Le code</h2>
+      <p class="ph">Les lignes surlignées sont celles qui tournent à cette étape.</p>
+      <div id="code"></div>
+      <div id="note"></div>
+    </section>
+
+    <section class="term">
+      <div class="term-h"><span class="who">Terminal · agent N1 <small>poste du support</small></span><span class="pill" id="pill">en attente</span></div>
+      <div class="term-b" id="tb"></div>
+      <div class="term-f">Les réponses du modèle (🤖 et les textes rendus par <code>invoke</code>) sont des exemples : elles varient d'un lancement à l'autre. Les nombres de messages et de checkpoints correspondent à ce déroulé (un appel d'outil par tour).</div>
+    </section>
+  </div>
+
+  <h2 class="sect-h">Ce qu'il faut retenir</h2>
+  <div class="lessons">
+    <article class="lesson"><div class="n">1 · LA SAUVEGARDE</div><h3>Un checkpoint à chaque super-step</h3><p><code>compile(checkpointer=…)</code> suffit. <code>InMemorySaver</code> garde tout en RAM et perd tout à l'arrêt. <code>SqliteSaver</code> écrit dans un fichier qui survit au programme.</p></article>
+    <article class="lesson"><div class="n">2 · LE THREAD</div><h3>thread_id = une conversation</h3><p>Même <code>thread_id</code> : la suite de l'historique. Autre <code>thread_id</code> : on repart de zéro. <code>get_state</code> rend la dernière sauvegarde du thread.</p></article>
+    <article class="lesson"><div class="n">3 · LE VOYAGE</div><h3>Repartir d'une sauvegarde crée une branche</h3><p><code>get_state_history</code> liste les sauvegardes, la plus récente d'abord. <code>invoke(None, config_avec_checkpoint_id)</code> ou <code>update_state</code> puis <code>invoke(None, fork)</code> : nouvelle branche, ancien historique intact. Les nœuds sont vraiment ré-exécutés.</p></article>
+    <article class="lesson"><div class="n">4 · LE RGPD</div><h3>Un checkpoint contient la conversation en clair</h3><p>Le masquage de Langfuse ne s'y applique pas. <code>delete_thread(thread_id)</code> efface tout le thread, branches comprises, dans <code>checkpoints</code> et <code>writes</code>.</p></article>
+  </div>
+</div>
+
+<script>
+(function(){
+"use strict";
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+const T1 = "Mon VPN ne marche plus";
+const T2 = "Et srv-vpn-01, il est en ligne ?";
+const TC = "srv-mail-01 ne répond plus depuis ce matin.";
+const CMD = "$ uv run --project infrastructure python construction/etape_04_memoire.py";
+const FICHIER = "data\\checkpoints\\construction.sqlite";
+const G1 = "Tour 1 · 1er lancement", G2 = "Tour 2 · 2e lancement", G43 = "Tour 1 · 2e lancement", GB = "Branche · voyage dans le temps";
+const OPT = { a: 0, b: 1, c: 3 };   // le step de la sauvegarde choisie
+
+/* ---------- identifiants de checkpoint (forme réelle, valeurs fictives, croissants comme de vrais uuid6) ---------- */
+function mkId(seq){
+  let x = (seq * 7919 + 12345) >>> 0;
+  const r = n => { let o = ""; for (let i = 0; i < n; i++){ x = (Math.imul(x, 1103515245) + 12345) >>> 0; o += ((x >>> 16) & 15).toString(16); } return o; };
+  return "1f1dc766-" + (0x2100 + seq * 3).toString(16) + "-6" + r(3) + "-8" + r(3) + "-" + r(12);
+}
+const shortId = id => "…" + id.slice(-4);
+
+/* ---------- le code affiché ---------- */
+function codeBlocks(c){
+  const n = OPT[c.cp];
+  return [
+    ["Le principe (notebook J2-01)", [
+      ["a0", 'graphe = builder.<span class="f">compile</span>()                              <span class="c"># sans checkpointer : amnésique</span>'],
+      ["a1", '<span class="k">from</span> langgraph.checkpoint.memory <span class="k">import</span> InMemorySaver'],
+      ["a2", 'graphe = builder.<span class="f">compile</span>(checkpointer=<span class="f">InMemorySaver</span>())   <span class="c"># en RAM : perdu à l\'arrêt</span>'],
+    ]],
+    ["construction/etape_04_memoire.py", [
+      ["b1", '<span class="k">with</span> SqliteSaver.<span class="f">from_conn_string</span>(<span class="f">str</span>(BASE)) <span class="k">as</span> memoire:   <span class="c"># data/checkpoints/construction.sqlite</span>'],
+      ["b2", '    graphe = builder.<span class="f">compile</span>(checkpointer=memoire)'],
+      ["b3", '    config = {<span class="s">"configurable"</span>: {<span class="s">"thread_id"</span>: args.thread}, …}'],
+      ["b4", '    <span class="k">if</span> args.oublier:                                   <span class="c"># droit à l\'effacement</span>'],
+      ["b5", '        memoire.<span class="f">delete_thread</span>(args.thread)'],
+      ["b6", '    avant = <span class="f">len</span>(graphe.<span class="f">get_state</span>(config).values.<span class="f">get</span>(<span class="s">"messages"</span>, []))'],
+      ["b7", '    etat = graphe.<span class="f">invoke</span>({<span class="s">"ticket"</span>: args.message}, config=config)'],
+      ["b8", '    historique = <span class="f">list</span>(graphe.<span class="f">get_state_history</span>(config))'],
+    ]],
+    ["Le voyage dans le temps (notebook J2-01, sur le graphe de l'étape 4)", [
+      ["t1", 'historique = <span class="f">list</span>(graphe.<span class="f">get_state_history</span>(config))   <span class="c"># du plus récent au plus ancien</span>'],
+      ["t2", 'cible = <span class="f">next</span>(s <span class="k">for</span> s <span class="k">in</span> historique <span class="k">if</span> s.metadata[<span class="s">"step"</span>] == ' + n + ')'],
+      ["t3", '<span class="c"># rejouer tel quel depuis cette sauvegarde :</span>'],
+      ["t4", 'etat = graphe.<span class="f">invoke</span>(<span class="k">None</span>, cible.config)'],
+      ["t5", '<span class="c"># ou bifurquer : un checkpoint corrigé, puis reprendre :</span>'],
+      ["t6", 'fork = graphe.<span class="f">update_state</span>(cible.config, {<span class="s">"ticket"</span>: <span class="s">"' + TC + '"</span>})'],
+      ["t7", 'etat = graphe.<span class="f">invoke</span>(<span class="k">None</span>, fork)'],
+    ]],
+  ];
+}
+
+/* ---------- le modèle ---------- */
+const PH = {a:"Avant", s:"Sauvegardes", t:"Threads", v:"Voyage dans le temps", r:"RGPD", b:"Bilan"};
+const PHASE = ["a","s","s","s","s","s","s","s","t","t","v","v","v","v","v","r","b"];
+const SEGOF = {a:0, s:1, t:2, v:3, r:4, b:4};
+const SEGFR = [10, 34, 16, 28, 12];
+
+function initial(){
+  return { saver: "none", threads: {"conv-42": [], "conv-43": []}, deleted: {}, seq: 0, term: [], proc: "idle" };
+}
+function resetTransient(s){
+  s.g = {active: null, done: [], edge: null, trail: []};
+  s.code = []; s.codeCls = "hl"; s.query = null; s.sel = null; s.src = null; s.rank = null;
+  s.latest = false; s.choices = null; s.note = null; s.focus = null; s.flash = ""; s.emptySnap = null;
+}
+const V = (ticket, msgs) => ({ticket, categorie: "reseau", priorite: "P3", file: "N2-infra", messages: msgs});
+function addCp(s, th, o){
+  const a = s.threads[th];
+  const parent = o.parent !== undefined ? o.parent : (a.length ? a[a.length - 1].seq : null);
+  const cp = Object.assign({}, o, {seq: s.seq, id: mkId(s.seq), parent, values: Object.assign({}, o.values)});
+  a.push(cp); s.seq++;
+  return cp.seq;
+}
+const byStep = (s, th, step) => s.threads[th].find(c => c.step === step);   // le premier dans l'ordre chronologique
+const newest = (s, th) => { const a = s.threads[th]; return a[a.length - 1]; };
+function graphRun(s, nodes, active, edge){
+  // nodes : les nœuds déjà exécutés dans cet invoke, dans l'ordre
+  const E = {"START>trier":"e_st","trier>agent":"e_ta","agent>tools":"e_at","tools>agent":"e_tt","agent>END":"e_ae"};
+  s.g.done = nodes.slice(); s.g.active = active; s.g.edge = edge || null;
+  for (let i = 1; i < nodes.length; i++){ const e = E[nodes[i-1] + ">" + nodes[i]]; if (e && !s.g.trail.includes(e)) s.g.trail.push(e); }
+  if (active && nodes.length){ const e = E[nodes[nodes.length-1] + ">" + active]; if (e && !s.g.trail.includes(e)) s.g.trail.push(e); }
+}
+// un tour complet (6 checkpoints) sur un thread : input, puis un checkpoint par super-step
+function fullTurn(s, th, ticket, group){
+  const prev = newest(s, th);
+  const base = prev ? prev.values : null;
+  const st = prev ? prev.step + 1 : -1;
+  const m = base ? base.messages : 0;
+  addCp(s, th, {step: st,     src: "input", next: "__start__", label: "entrée reçue", values: base || {}, group});
+  addCp(s, th, {step: st + 1, src: "loop",  next: "trier", label: "entrée appliquée", values: base ? Object.assign({}, base, {ticket}) : {ticket}, group});
+  addCp(s, th, {step: st + 2, src: "loop",  next: "agent", label: "après trier", values: V(ticket, m + 1), group});
+  addCp(s, th, {step: st + 3, src: "loop",  next: "tools", label: "après agent", values: V(ticket, m + 2), group});
+  addCp(s, th, {step: st + 4, src: "loop",  next: "agent", label: "après tools", values: V(ticket, m + 3), group});
+  return addCp(s, th, {step: st + 5, src: "loop", next: "()", label: "après agent", values: V(ticket, m + 4), group});
+}
+const stepsList = (s, th) => "[" + s.threads[th].slice().sort((x, y) => y.seq - x.seq).map(c => c.step).join(", ") + "]";
+
+const STEPS = [
+  /* 0 */ (s) => {
+    s.code = ["a0"];
+    s.title = "Un agent sans mémoire";
+    s.text = "Sans checkpointer, l'état du graphe vit le temps d'un seul <code>invoke()</code>. Au message suivant, tout repart de zéro. L'agent ne sait plus de quel serveur on vient de parler : il est <b>amnésique</b>.";
+  },
+  /* 1 */ (s) => {
+    s.saver = "mem"; s.code = ["a1","a2"];
+    s.title = "Brancher un checkpointer";
+    s.text = "Pensez aux sauvegardes d'un jeu vidéo, une à chaque niveau franchi. LangGraph écrit un <b>checkpoint</b> à la fin de <b>chaque super-step</b> : l'état complet et la suite prévue. <code>InMemorySaver</code> range ces sauvegardes dans la RAM du processus. À l'arrêt du programme, elles disparaissent.";
+  },
+  /* 2 */ (s) => {
+    s.saver = "sqlite"; s.code = ["b1","b2","b3"]; s.codeCls = "hld";
+    s.title = "Dans le script : SqliteSaver";
+    s.text = "L'étape 4 range les checkpoints dans un fichier, <code>data/checkpoints/construction.sqlite</code>, ignoré par Git. Ce fichier survit à l'arrêt du programme. La config porte le <code>thread_id</code> : le nom de la conversation, comme un emplacement de sauvegarde.";
+  },
+  /* 3 */ (s) => {
+    s.proc = "run";
+    s.term.push({c:"cmd", x: CMD + ' --thread conv-42 "' + T1 + '"'});
+    s.term.push({c:"sys", x:"[schéma ASCII du graphe, affiché parce que le thread est vide]"});
+    s.term.push({x:"🗺️  Schéma Mermaid : construction\\sortie\\etape_04_graphe.md"});
+    s.term.push({x:"💾 Thread conv-42 : 0 message(s) déjà en mémoire"});
+    s.term.push({x:"🎫 " + T1});
+    s.query = {q:'graphe.get_state({"configurable": {"thread_id": "conv-42"}})', r:"→ aucun checkpoint sous ce nom · values = {} · 0 message", cls:"miss"};
+    s.focus = "conv-42"; s.code = ["b6"]; s.emptySnap = "conv-42";
+    s.title = "Premier lancement : le thread est vide";
+    s.text = "L'agent N1 lance le script avec <code>--thread conv-42</code>. Avant d'invoquer le graphe, le script appelle <code>get_state(config)</code>. Aucun checkpoint n'existe sous ce nom. L'état est vide : 0 message.";
+  },
+  /* 4 */ (s) => {
+    addCp(s, "conv-42", {step: -1, src: "input", next: "__start__", label: "entrée reçue", values: {}, group: G1});
+    s.sel = addCp(s, "conv-42", {step: 0, src: "loop", next: "trier", label: "entrée appliquée", values: {ticket: T1}, group: G1});
+    s.g = {active: null, done: ["START"], edge: "e_st", trail: []};
+    s.focus = "conv-42"; s.code = ["b7"]; s.flash = "+2 checkpoints : step -1, step 0";
+    s.title = "invoke() : deux checkpoints avant trier";
+    s.text = "<code>invoke()</code> écrit d'abord le <b>step -1</b>, source <code>input</code> : l'entrée reçue, pas encore appliquée. Puis le <b>step 0</b>, source <code>loop</code> : le ticket est dans l'état et le prochain nœud est <code>trier</code>. Chaque checkpoint a son <code>checkpoint_id</code> et pointe vers son parent.";
+  },
+  /* 5 */ (s) => {
+    addCp(s, "conv-42", {step: 1, src: "loop", next: "agent", label: "après trier", values: V(T1, 1), group: G1});
+    s.sel = addCp(s, "conv-42", {step: 2, src: "loop", next: "tools", label: "après agent", values: V(T1, 2), group: G1});
+    graphRun(s, ["START","trier","agent"], null, "e_at");
+    s.focus = "conv-42"; s.code = ["b7"]; s.flash = "+2 checkpoints : step 1, step 2";
+    s.title = "Un checkpoint après chaque nœud";
+    s.text = "<code>trier</code> classe le ticket : reseau, P3, file N2-infra. Checkpoint step 1, <code>next = agent</code>. L'agent demande l'outil <code>chercher_kb</code> : step 2, <code>next = tools</code>. Chaque sauvegarde permet de retrouver l'état complet à cet instant.";
+  },
+  /* 6 */ (s) => {
+    addCp(s, "conv-42", {step: 3, src: "loop", next: "agent", label: "après tools", values: V(T1, 3), group: G1});
+    s.sel = addCp(s, "conv-42", {step: 4, src: "loop", next: "()", label: "après agent", values: V(T1, 4), group: G1});
+    graphRun(s, ["START","trier","agent","tools","agent","END"], null, null);
+    s.term.push({x:"   🧰 outil appelé : chercher_kb({'question': 'VPN ne marche plus'})"});
+    s.term.push({x:"   🤖 Suivez la procédure KB-001 : installez NordTech Connect depuis le Centre logiciel et validez la notification MFA. Si le problème persiste, je propose d'ouvrir un ticket."});
+    s.term.push({x:"💾 Thread conv-42 : 4 messages, 6 checkpoints dans " + FICHIER});
+    s.term.push({x:"🔭 Langfuse › Sessions › conv-42"});
+    s.term.push({c:"sys", x:"[processus terminé · code 0]"});
+    s.proc = "dead"; s.focus = "conv-42"; s.code = ["b7","b8"]; s.flash = "+2 checkpoints : step 3, step 4";
+    s.title = "Fin du premier tour";
+    s.text = "L'outil répond (step 3). L'agent conclut sans outil (step 4, <code>next = ()</code> : terminé). Bilan du tour : 4 messages et 6 checkpoints, du step -1 au step 4. Le processus se termine, sa mémoire disparaît, le fichier reste.";
+  },
+  /* 7 */ (s) => {
+    s.sel = newest(s, "conv-42").seq; s.latest = true; s.focus = "conv-42";
+    s.query = {q:'graphe.get_state({"configurable": {"thread_id": "conv-42"}})', r:"→ le checkpoint le plus récent du thread : step 4 · next = () · 4 messages"};
+    s.code = ["b6"];
+    s.title = "get_state : la dernière sauvegarde";
+    s.text = "<code>get_state(config)</code> renvoie un <code>StateSnapshot</code>, celui du checkpoint le plus récent du thread. On y lit <code>values</code> (l'état), <code>next</code> (la suite), <code>config</code> avec le <code>checkpoint_id</code> (l'adresse de la sauvegarde) et <code>metadata</code> (step, source). Cliquez une ligne du checkpointer pour afficher une autre sauvegarde.";
+  },
+  /* 8 */ (s, c) => {
+    s.proc = "run"; s.choices = "thread";
+    s.term.push({c:"cmd", x: CMD + " --thread " + c.th + ' "' + T2 + '"'});
+    s.code = ["b3","b6"]; s.codeCls = "hld"; s.focus = c.th;
+    s.title = "Deuxième message : quel thread ?";
+    s.text = "L'agent N1 relance le script avec une suite : « " + T2 + " ». C'est un nouveau processus : il ne connaît que ce qui est dans le fichier. <b>Choisissez ci-dessous le thread du deuxième message.</b>";
+  },
+  /* 9 */ (s, c) => {
+    s.choices = "thread"; s.focus = c.th;
+    if (c.th === "conv-42"){
+      s.query = {q:'graphe.get_state({"configurable": {"thread_id": "conv-42"}})', r:"→ dernier checkpoint : step 4 · 4 messages déjà en mémoire"};
+      s.term.push({x:"💾 Thread conv-42 : 4 message(s) déjà en mémoire"});
+      s.term.push({x:"🎫 " + T2});
+      s.sel = fullTurn(s, "conv-42", T2, G2);
+      s.term.push({x:"   🧰 outil appelé : statut_serveur({'nom': 'srv-vpn-01'})"});
+      s.term.push({x:"   🤖 Oui, srv-vpn-01 est en ligne. Le blocage vient donc plutôt de votre poste : suivez la procédure KB-001 vue plus haut."});
+      s.term.push({x:"💾 Thread conv-42 : 8 messages, 12 checkpoints dans " + FICHIER});
+      s.term.push({x:"🔭 Langfuse › Sessions › conv-42"});
+      s.flash = "+6 checkpoints sur conv-42 : step 5 à step 10";
+      s.title = "Même thread : la conversation continue";
+      s.text = "<code>get_state</code> retrouve le dernier checkpoint de <code>conv-42</code> : <b>4 messages déjà en mémoire</b>, relus dans le fichier. <code>invoke()</code> ajoute les steps 5 à 10 à la suite. L'agent voit le premier tour et relie srv-vpn-01 au problème de VPN. Le thread compte maintenant 8 messages et 12 checkpoints.";
+    } else {
+      s.query = {q:'graphe.get_state({"configurable": {"thread_id": "conv-43"}})', r:"→ aucun checkpoint sous ce nom · values = {} · 0 message", cls:"miss"};
+      s.term.push({c:"sys", x:"[schéma ASCII du graphe, affiché parce que le thread est vide]"});
+      s.term.push({x:"🗺️  Schéma Mermaid : construction\\sortie\\etape_04_graphe.md"});
+      s.term.push({x:"💾 Thread conv-43 : 0 message(s) déjà en mémoire"});
+      s.term.push({x:"🎫 " + T2});
+      s.sel = fullTurn(s, "conv-43", T2, G43);
+      s.term.push({x:"   🧰 outil appelé : statut_serveur({'nom': 'srv-vpn-01'})"});
+      s.term.push({x:"   🤖 Oui, le serveur srv-vpn-01 est en ligne."});
+      s.term.push({x:"💾 Thread conv-43 : 4 messages, 6 checkpoints dans " + FICHIER});
+      s.term.push({x:"🔭 Langfuse › Sessions › conv-43"});
+      s.flash = "+6 checkpoints sur conv-43 : step -1 à step 4";
+      s.title = "Nouveau thread : on repart de zéro";
+      s.text = "<code>conv-43</code> n'existe pas encore : <b>0 message en mémoire</b>. Ses checkpoints repartent du step -1. L'agent répond sur srv-vpn-01 sans rien savoir du problème de VPN. <code>conv-42</code> n'a pas bougé. Même graphe, même fichier : c'est le <code>thread_id</code> qui isole les conversations.";
+    }
+    s.term.push({c:"sys", x:"[processus terminé · code 0]"});
+    s.proc = "dead";
+    graphRun(s, ["START","trier","agent","tools","agent","END"], null, null);
+    s.code = ["b6","b7","b8"];
+  },
+  /* 10 */ (s, c) => {
+    s.proc = "py"; s.focus = "conv-42"; s.rank = "conv-42"; s.latest = true;
+    const n = s.threads["conv-42"].length;
+    s.term.push({c:"sys", x:"[session Python : même builder, SqliteSaver sur le même fichier, config = {'configurable': {'thread_id': 'conv-42'}}]"});
+    s.term.push({c:"cmd", x:">>> historique = list(graphe.get_state_history(config))"});
+    s.term.push({c:"cmd", x:">>> len(historique)"});
+    s.term.push({x: String(n)});
+    s.term.push({c:"cmd", x:">>> [s.metadata['step'] for s in historique]"});
+    s.term.push({x: stepsList(s, "conv-42")});
+    s.sel = newest(s, "conv-42").seq;
+    s.query = {q:"graphe.get_state_history(config)", r:"→ " + n + " StateSnapshot, du step " + newest(s, "conv-42").step + " au step -1 : le plus récent en premier"};
+    s.code = ["t1"]; s.codeCls = "hlv";
+    s.title = "get_state_history : toutes les sauvegardes";
+    s.text = "Dans une session Python sur le même fichier, <code>get_state_history(config)</code> renvoie les " + n + " checkpoints de <code>conv-42</code>, <b>du plus récent au plus ancien</b>. Le premier de la liste est celui que renvoie <code>get_state</code>. Les numéros à gauche des lignes donnent cet ordre.";
+  },
+  /* 11 */ (s, c) => {
+    s.proc = "py"; s.focus = "conv-42"; s.choices = "cp";
+    const st = OPT[c.cp], cible = byStep(s, "conv-42", st);
+    s.src = cible.seq; s.sel = cible.seq;
+    s.term.push({c:"cmd", x:">>> cible = next(s for s in historique if s.metadata['step'] == " + st + ")"});
+    s.term.push({c:"cmd", x:">>> cible.next"});
+    s.term.push({x:"('" + cible.next + "',)"});
+    s.term.push({c:"cmd", x:">>> cible.config['configurable']['checkpoint_id']"});
+    s.term.push({x:"'" + cible.id + "'"});
+    s.query = {q:'next(s for s in historique if s.metadata["step"] == ' + st + ")", r:'→ cible.config = {"configurable": {"thread_id": "conv-42", "checkpoint_ns": "", "checkpoint_id": "' + cible.id + '"}}', cls:"tt"};
+    s.code = ["t2"]; s.codeCls = "hlv";
+    s.title = "Choisir une sauvegarde";
+    const fin = " <b>Choisissez ci-dessous la sauvegarde de départ.</b>";
+    if (c.cp === "a") s.text = "On choisit le <b>step 0</b> : le ticket est dans l'état, <code>trier</code> n'a pas encore tourné. <code>cible.config</code> contient le <code>checkpoint_id</code> de cette sauvegarde. On va corriger le ticket avec <code>update_state</code>, comme on recharge une partie pour jouer autrement." + fin;
+    else if (c.cp === "b") s.text = "On choisit le <b>step 1</b> : le ticket est trié, l'agent n'a pas encore répondu. <code>cible.config</code> contient le <code>checkpoint_id</code> de cette sauvegarde. On va rejouer à partir de là, sans rien changer." + fin;
+    else s.text = "On choisit le <b>step 3</b> : l'outil a répondu, l'agent n'a pas encore conclu. <code>cible.config</code> contient le <code>checkpoint_id</code> de cette sauvegarde. On va rejouer à partir de là, sans rien changer." + fin;
+  },
+  /* 12 */ (s, c) => {
+    s.proc = "py"; s.focus = "conv-42"; s.choices = "cp";
+    const st = OPT[c.cp], cible = byStep(s, "conv-42", st);
+    s.src = cible.seq;
+    if (c.cp === "a"){
+      s.sel = addCp(s, "conv-42", {step: 1, src: "update", next: "trier", label: "update_state : ticket corrigé", values: {ticket: TC}, group: GB, parent: cible.seq});
+      const f = newest(s, "conv-42");
+      s.term.push({c:"cmd", x:">>> fork = graphe.update_state(cible.config, {'ticket': '" + TC + "'})"});
+      s.term.push({c:"cmd", x:">>> fork"});
+      s.term.push({x:"{'configurable': {'thread_id': 'conv-42', 'checkpoint_ns': '', 'checkpoint_id': '" + f.id + "'}}"});
+      s.query = {q:'graphe.update_state(cible.config, {"ticket": "' + TC + '"})', r:'→ nouveau checkpoint : step 1, source "update", parent = step 0 (' + shortId(cible.id) + ")", cls:"tt"};
+      s.code = ["t5","t6"]; s.codeCls = "hlv"; s.flash = "+1 checkpoint : step 1, source update";
+      s.title = "update_state : un checkpoint corrigé";
+      s.text = "<code>update_state(cible.config, {...})</code> écrit un <b>nouveau</b> checkpoint, enfant du step 0, avec le ticket corrigé. Ses metadata : source <code>update</code>, step 1. Le step 0 d'origine ne change pas. La fonction renvoie la config de ce nouveau checkpoint, avec son propre <code>checkpoint_id</code>.";
+    } else {
+      s.sel = addCp(s, "conv-42", {step: st + 1, src: "fork", next: "agent", label: "copie du step " + st, values: cible.values, group: GB, parent: cible.seq});
+      s.term.push({c:"cmd", x:">>> etat = graphe.invoke(None, cible.config)"});
+      s.query = {q:"graphe.invoke(None, cible.config)", r:'→ d\'abord une copie de la sauvegarde : step ' + (st + 1) + ', source "fork", parent = step ' + st + " (" + shortId(cible.id) + ")", cls:"tt"};
+      s.code = ["t3","t4"]; s.codeCls = "hlv"; s.flash = "+1 checkpoint : step " + (st + 1) + ", source fork";
+      s.title = "invoke(None) depuis une sauvegarde passée";
+      s.text = "<code>None</code> veut dire « pas de nouvelle entrée ». Avec un <code>checkpoint_id</code> dans la config, LangGraph charge cette sauvegarde au lieu de la dernière. Il écrit d'abord une copie, source <code>fork</code>, step " + (st + 1) + ", enfant du step " + st + ". C'est le début de la branche.";
+    }
+  },
+  /* 13 */ (s, c) => {
+    s.proc = "py"; s.focus = "conv-42"; s.choices = "cp";
+    const st = OPT[c.cp]; s.src = byStep(s, "conv-42", st).seq;
+    let rep;
+    if (c.cp === "a"){
+      addCp(s, "conv-42", {step: 2, src: "loop", next: "agent", label: "après trier", values: V(TC, 1), group: GB});
+      addCp(s, "conv-42", {step: 3, src: "loop", next: "tools", label: "après agent", values: V(TC, 2), group: GB});
+      addCp(s, "conv-42", {step: 4, src: "loop", next: "agent", label: "après tools", values: V(TC, 3), group: GB});
+      s.sel = addCp(s, "conv-42", {step: 5, src: "loop", next: "()", label: "après agent", values: V(TC, 4), group: GB});
+      graphRun(s, ["trier","agent","tools","agent","END"], null, null);
+      s.term.push({c:"cmd", x:">>> etat = graphe.invoke(None, fork)"});
+      rep = "'Le serveur srv-mail-01 est en ligne. Vérifiez votre client de messagerie ou ouvrez un ticket.'";
+      s.code = ["t7"]; s.flash = "+4 checkpoints : step 2 à step 5";
+      s.title = "La branche s'exécute";
+      s.text = "<code>invoke(None, fork)</code> reprend depuis le checkpoint corrigé. <code>trier</code> reclasse le nouveau ticket, l'agent appelle <code>statut_serveur(\"srv-mail-01\")</code> puis conclut. Les nœuds tournent vraiment : le LLM et les outils sont rappelés.";
+    } else if (c.cp === "b"){
+      addCp(s, "conv-42", {step: 3, src: "loop", next: "tools", label: "après agent", values: V(T1, 2), group: GB});
+      addCp(s, "conv-42", {step: 4, src: "loop", next: "agent", label: "après tools", values: V(T1, 3), group: GB});
+      s.sel = addCp(s, "conv-42", {step: 5, src: "loop", next: "()", label: "après agent", values: V(T1, 4), group: GB});
+      graphRun(s, ["agent","tools","agent","END"], null, null);
+      rep = "'Suivez la procédure KB-001 : réinstallez NordTech Connect et validez la notification MFA.'";
+      s.code = ["t4"]; s.flash = "+3 checkpoints : step 3 à step 5";
+      s.title = "La branche s'exécute";
+      s.text = "L'agent est rappelé avec les mêmes messages. Dans ce déroulé, il redemande <code>chercher_kb</code>, l'outil répond, l'agent conclut. Le LLM est appelé une nouvelle fois : sa réponse peut différer de celle du premier tour.";
+    } else {
+      s.sel = addCp(s, "conv-42", {step: 5, src: "loop", next: "()", label: "après agent", values: V(T1, 4), group: GB});
+      graphRun(s, ["agent","END"], null, null);
+      rep = "'Réinstallez NordTech Connect (KB-001) et validez la notification MFA sur votre téléphone.'";
+      s.code = ["t4"]; s.flash = "+1 checkpoint : step 5";
+      s.title = "La branche s'exécute";
+      s.text = "Seul l'agent est rejoué : le résultat de l'outil est déjà dans la sauvegarde. Le LLM est appelé une nouvelle fois et conclut. Sa réponse peut différer de celle du premier tour.";
+    }
+    s.term.push({c:"cmd", x:">>> etat['messages'][-1].content"});
+    s.term.push({x: rep});
+    s.codeCls = "hlv";
+    s.note = {cls:"p", h:"<b>Rejouer a un coût.</b> Les nœuds relancés rappellent le LLM et les outils. Un outil qui écrit (créer un ticket, envoyer un mail) rejoué deux fois, c'est un doublon. D'où l'idempotence, au cœur de J2-02."};
+  },
+  /* 14 */ (s, c) => {
+    s.proc = "py"; s.focus = "conv-42"; s.rank = "conv-42"; s.latest = true;
+    const fin = newest(s, "conv-42"); s.sel = fin.seq;
+    s.term.push({c:"cmd", x:">>> [s.metadata['step'] for s in graphe.get_state_history(config)]"});
+    s.term.push({x: stepsList(s, "conv-42")});
+    s.term.push({c:"cmd", x:">>> len(graphe.get_state(config).values['messages'])"});
+    s.term.push({x: String(fin.values.messages)});
+    s.query = {q:"graphe.get_state(config)", r:"→ la fin de la branche : step " + fin.step + " · " + fin.values.messages + " messages · " + shortId(fin.id)};
+    s.code = ["t1"]; s.codeCls = "hlv";
+    s.title = "L'historique n'a rien perdu";
+    const commun = " <code>get_state_history</code> met la branche en tête, car ses checkpoints sont les plus récents. Les numéros de step se répètent : seul le <code>checkpoint_id</code> désigne une sauvegarde.";
+    if (c.th === "conv-42") s.text = "<code>get_state(config)</code> renvoie maintenant la fin de la branche : " + fin.values.messages + " messages. Le deuxième tour ne figure pas sur cette branche. Ses 6 checkpoints restent dans l'historique." + commun;
+    else s.text = "<code>get_state(config)</code> renvoie maintenant la fin de la branche. L'ancienne fin, le step 4 du premier tour, reste dans l'historique avec tous ses ancêtres." + commun;
+  },
+  /* 15 */ (s, c) => {
+    s.proc = "dead";
+    s.term.push({c:"cmd", x: CMD + " --thread conv-42 --oublier"});
+    s.term.push({c:"good", x:"🧹 Conversation conv-42 effacée du fichier SQLite."});
+    s.term.push({c:"sys", x:"[processus terminé · code 0]"});
+    s.threads["conv-42"] = []; s.deleted["conv-42"] = true;
+    s.focus = "conv-42"; s.emptySnap = "conv-42";
+    s.query = {q:'memoire.delete_thread("conv-42")', r:"→ ensuite : get_state(config).values = {} · list(get_state_history(config)) = []", cls:"miss"};
+    s.code = ["b4","b5"]; s.codeCls = "hle";
+    s.title = "RGPD : effacer la conversation";
+    s.text = "Un checkpoint contient la conversation <b>en clair</b> : le masquage PII de Langfuse ne s'y applique pas. <code>--oublier</code> appelle <code>memoire.delete_thread(\"conv-42\")</code>, qui supprime toutes les lignes du thread dans les tables <code>checkpoints</code> et <code>writes</code>, branche comprise." + (c.th === "conv-43" ? " <code>conv-43</code> n'est pas touché." : "");
+  },
+  /* 16 */ (s, c) => {
+    s.latest = true; s.emptySnap = "conv-42";
+    s.title = "Bilan";
+    s.text = "Une sauvegarde par super-step, rangée sous un <code>thread_id</code>. <code>get_state</code> lit la dernière, <code>get_state_history</code> les lit toutes, la plus récente d'abord. Repartir d'une sauvegarde passée crée une branche et ne détruit rien. <code>delete_thread</code> efface la conversation entière.";
+  },
+];
+const N = STEPS.length - 1;
+
+/* ---------- état de lecture ---------- */
+const ctx = { th: "conv-42", cp: "a", inspect: null };
+let idx = 0, prevIdx = -1, playing = false, timer = null, prevModel = null;
+const seen = new Set([0]);
+
+function build(i){
+  const s = initial();
+  for (let k = 0; k <= i; k++){ resetTransient(s); STEPS[k](s, ctx); }
+  return s;
+}
+
+/* ---------- rendu ---------- */
+function renderGraph(s){
+  ["START","trier","agent","tools","END"].forEach(n => {
+    const g = $("n-" + n); g.classList.remove("on","done");
+    if (s.g.active === n) g.classList.add("on");
+    else if (s.g.done.includes(n)) g.classList.add("done");
+  });
+  ["e_st","e_ta","e_at","e_tt","e_ae"].forEach(e => {
+    const p = $(e); p.classList.remove("on","trail");
+    if (s.g.edge === e) p.classList.add("on"); else if (s.g.trail.includes(e)) p.classList.add("trail");
+  });
+  $("cpflash").textContent = s.flash;
+}
+
+const fmtNext = n => n === "()" ? "()" : '("' + n + '",)';
+function cpRow(s, th, c, rankMap, fresh, selSeq, newestSeq){
+  const cls = [];
+  if (c.seq === selSeq) cls.push("sel");
+  if (c.seq === s.src) cls.push("src");
+  if (fresh != null && c.seq >= fresh) cls.push("fresh");
+  const rk = rankMap ? rankMap.get(c.seq) : "";
+  const lt = s.latest && c.seq === newestSeq ? '<span class="latest">← get_state</span>' : "";
+  return `<li class="${cls.join(" ")}" data-seq="${c.seq}" tabindex="0" title="checkpoint_id ${c.id}"><span class="rk${rk === 1 ? " first" : ""}">${rk || ""}</span><span class="n">${c.step}</span><span class="lb">${esc(c.label)}<span class="srcc ${c.src}">${c.src}</span>${lt}<small>${shortId(c.id)}</small></span><span class="nx">next ${esc(fmtNext(c.next))}</span></li>`;
+}
+function renderStore(s, fresh, selSeq){
+  const W = {none:"Aucun checkpointer branché : rien n'est sauvegardé entre deux invoke().", mem:"InMemorySaver : les checkpoints vivent dans la RAM du processus, rangés par thread_id.", sqlite:"SqliteSaver : data/checkpoints/construction.sqlite (tables checkpoints et writes), rangés par thread_id."};
+  $("storeph").textContent = W[s.saver];
+  let h = "";
+  if (s.query) h += `<div class="query ${s.query.cls || ""}">${esc(s.query.q)}<span class="res">${esc(s.query.r)}</span></div>`;
+  if (s.saver === "none"){ $("store").innerHTML = h + `<div class="empty">Chaque invoke() part d'un état vide. Rien n'est écrit nulle part.</div>`; return; }
+  h += `<div class="threads">`;
+  for (const th of ["conv-42","conv-43"]){
+    const a = s.threads[th];
+    const gone = s.deleted[th];
+    h += `<div class="thread${s.focus === th && !gone ? " hit" : ""}${gone ? " gone" : ""}"><div class="th"><span>thread_id <b>${th}</b></span><span>${gone ? "effacé" : a.length + " checkpoint" + (a.length > 1 ? "s" : "")}</span></div>`;
+    if (!a.length) h += `<div class="empty">${gone ? "Aucun checkpoint : le thread a été effacé." : "Aucun checkpoint pour l'instant."}</div>`;
+    else {
+      const rankMap = s.rank === th ? new Map(a.slice().sort((x, y) => y.seq - x.seq).map((c, i) => [c.seq, i + 1])) : null;
+      const newestSeq = a[a.length - 1].seq;
+      const groups = [];
+      a.forEach(c => { let g = groups.find(x => x.name === c.group); if (!g){ g = {name: c.group, items: []}; groups.push(g); } g.items.push(c); });
+      groups.forEach(g => {
+        const br = g.name === GB;
+        let gh = g.name;
+        if (br){ const p = a.find(x => x.seq === g.items[0].parent); if (p) gh += " · part du step " + p.step + " (" + shortId(p.id) + ")"; }
+        h += `<div class="grp-h${br ? " br" : ""}">${esc(gh)}</div><ol class="cps${br ? " br" : ""}">` + g.items.map(c => cpRow(s, th, c, rankMap, fresh, selSeq, newestSeq)).join("") + `</ol>`;
+      });
+    }
+    h += `</div>`;
+  }
+  h += `</div>`;
+  $("store").innerHTML = h;
+}
+
+function renderSnap(s, selSeq){
+  let found = null;
+  for (const th in s.threads){ const c = s.threads[th].find(x => x.seq === selSeq); if (c){ found = [th, c]; break; } }
+  if (!found){
+    if (s.emptySnap){
+      $("snap").innerHTML = `<p class="snap-h">get_state sur le thread <code>${s.emptySnap}</code></p><dl class="kv"><dt>values</dt><dd>{}</dd><dt>checkpoint_id</dt><dd>aucun : le thread ne contient aucun checkpoint</dd></dl>`;
+    } else {
+      $("snap").innerHTML = `<div class="empty">${s.saver === "none" ? "Sans checkpointer, il n'y a aucune sauvegarde à afficher." : "Aucune sauvegarde sélectionnée."}</div>`;
+    }
+    return;
+  }
+  const [th, c] = found;
+  const all = s.threads[th];
+  const parent = all.find(x => x.seq === c.parent);
+  const pv = parent ? parent.values : {};
+  const isNewest = all[all.length - 1].seq === c.seq;
+  let h = `<p class="snap-h">thread <code>${th}</code> · step <b>${c.step}</b>${isNewest ? ' · <span class="latest">le plus récent</span>' : ""}</p><dl class="kv">`;
+  const keys = Object.keys(c.values);
+  h += `<dt>values</dt><dd>${keys.length ? "" : "{}"}</dd>`;
+  keys.forEach(k => {
+    const v = c.values[k];
+    const shown = k === "messages" ? "[" + v + " message" + (v > 1 ? "s" : "") + "]" : '"' + v + '"';
+    const chg = !parent || pv[k] !== v;
+    h += `<dt class="sub">${k}</dt><dd class="${chg ? "chg" : ""}">${esc(shown)}</dd>`;
+  });
+  h += `<dt>next</dt><dd>${esc(fmtNext(c.next))}${c.next === "()" ? " : terminé" : ""}</dd>`;
+  h += `<dt>config</dt><dd>thread_id = "${th}"<br>checkpoint_id = "${c.id}"</dd>`;
+  h += `<dt>metadata</dt><dd>source = "${c.src}" · step = ${c.step}</dd>`;
+  h += `<dt>parent</dt><dd>${parent ? "checkpoint_id = \"" + parent.id + "\" (step " + parent.step + ")" : "None : premier checkpoint du thread"}</dd></dl>`;
+  $("snap").innerHTML = h;
+}
+
+function renderCode(s){
+  const blocks = codeBlocks(ctx);
+  $("code").innerHTML = blocks.map(([title, lines]) =>
+    `<div class="code-h">${esc(title)}</div><pre class="code">` +
+    lines.map(([id, html]) => `<span class="ln${s.code.includes(id) ? " " + s.codeCls : ""}">${html}</span>`).join("") + `</pre>`).join("");
+  $("note").innerHTML = s.note ? `<div class="note ${s.note.cls}">${s.note.h}</div>` : "";
+}
+
+function renderTerm(s, freshFrom){
+  const pill = $("pill");
+  const P = {idle:["", "en attente"], run:["run", "processus actif"], dead:["dead", "processus terminé"], py:["py", "session Python"]};
+  pill.className = "pill " + P[s.proc][0]; pill.textContent = P[s.proc][1];
+  let h = s.term.map((l, i) => `<div class="${l.c || ""}${i >= freshFrom ? " fresh" : ""}">${esc(l.x)}</div>`).join("");
+  if (!s.term.length) h = `<div class="sys">Rien n'a encore été lancé.</div>`;
+  const tb = $("tb"); tb.innerHTML = h; tb.scrollTop = tb.scrollHeight;
+}
+
+function renderSaver(s){
+  const n = $("saverName"), w = $("saverWhere");
+  const M = {none:["aucun","rien n'est sauvegardé"], mem:["InMemorySaver","RAM du processus · perdu à l'arrêt"], sqlite:["SqliteSaver","data/checkpoints/construction.sqlite"]};
+  n.className = "t " + s.saver; n.textContent = M[s.saver][0]; w.textContent = M[s.saver][1];
+}
+
+function markerLeft(i){
+  const p = PHASE[i], seg = SEGOF[p];
+  const same = PHASE.map((x, k) => [x, k]).filter(([x]) => SEGOF[x] === seg).map(([, k]) => k);
+  const k = same.indexOf(i), tot = SEGFR.reduce((a, b) => a + b, 0);
+  const start = SEGFR.slice(0, seg).reduce((a, b) => a + b, 0) / tot * 100, width = SEGFR[seg] / tot * 100;
+  return start + (k + 0.5) / same.length * width;
+}
+
+function render(){
+  const s = build(idx);
+  const forward = idx === prevIdx + 1;
+  const pm = forward ? prevModel : null;
+  const fresh = pm ? pm.seq : null;
+  const selSeq = (ctx.inspect != null && Object.values(s.threads).some(a => a.some(c => c.seq === ctx.inspect))) ? ctx.inspect : s.sel;
+
+  $("stepno").textContent = `Étape ${idx} / ${N}`;
+  const chip = $("phasechip"); chip.className = "phase-chip " + PHASE[idx]; chip.textContent = PH[PHASE[idx]];
+  $("captitle").textContent = s.title;
+  $("captext").innerHTML = s.text;
+  $("choices").hidden = !s.choices;
+  $("grpThread").hidden = s.choices !== "thread";
+  $("grpCp").hidden = s.choices !== "cp";
+  $("cSame").setAttribute("aria-pressed", ctx.th === "conv-42");
+  $("cNew").setAttribute("aria-pressed", ctx.th === "conv-43");
+  $("cpA").setAttribute("aria-pressed", ctx.cp === "a");
+  $("cpB").setAttribute("aria-pressed", ctx.cp === "b");
+  $("cpC").setAttribute("aria-pressed", ctx.cp === "c");
+
+  $("marker").style.left = `calc(${markerLeft(idx)}% - 1.5px)`;
+  for (let k = 0; k < 5; k++) $("seg" + k).classList.toggle("dim", SEGOF[PHASE[idx]] !== k);
+
+  renderSaver(s);
+  renderGraph(s);
+  renderStore(s, fresh, selSeq);
+  renderSnap(s, selSeq);
+  renderCode(s);
+  renderTerm(s, pm ? pm.term.length : 1e9);
+
+  $("bPrev").disabled = idx === 0;
+  $("bNext").disabled = idx === N;
+  $("bPlay").disabled = idx === N;
+  seen.add(idx);
+  $("dots").querySelectorAll(".dot").forEach((d, i) => {
+    d.classList.toggle("cur", i === idx);
+    d.classList.toggle("seen", seen.has(i));
+  });
+  if (idx === N && playing) stop();
+  prevModel = s; prevIdx = idx;
+}
+
+/* ---------- commandes ---------- */
+const DUR = i => i === 0 ? 4500 : (i === 8 || i === 11) ? 8000 : (i === 9 || i === 12 || i === 13 || i === 14) ? 7500 : 6000;
+function go(i){ idx = Math.max(0, Math.min(N, i)); ctx.inspect = null; render(); if (playing) schedule(); }
+function schedule(){ clearTimeout(timer); timer = setTimeout(() => { if (idx < N) { idx++; ctx.inspect = null; render(); if (playing) schedule(); } }, DUR(idx)); }
+function play(){ if (idx === N) return; playing = true; $("bPlay").textContent = "❚❚ Pause"; schedule(); }
+function stop(){ playing = false; clearTimeout(timer); $("bPlay").textContent = "▶ Lecture"; }
+
+$("dots").innerHTML = PHASE.map((p, i) => `<button class="dot ${p}" aria-label="Aller à l'étape ${i}" data-i="${i}"></button>`).join("");
+$("dots").addEventListener("click", e => { const b = e.target.closest(".dot"); if (b){ stop(); prevIdx = -2; go(+b.dataset.i); } });
+$("bNext").onclick = () => { stop(); go(idx + 1); };
+$("bPrev").onclick = () => { stop(); prevIdx = -2; go(idx - 1); };
+$("bPlay").onclick = () => playing ? stop() : play();
+$("bReset").onclick = () => { stop(); ctx.th = "conv-42"; ctx.cp = "a"; seen.clear(); prevIdx = -2; go(0); };
+const rerender = () => { prevIdx = -2; ctx.inspect = null; render(); };
+$("cSame").onclick = () => { ctx.th = "conv-42"; rerender(); };
+$("cNew").onclick  = () => { ctx.th = "conv-43"; rerender(); };
+$("cpA").onclick = () => { ctx.cp = "a"; rerender(); };
+$("cpB").onclick = () => { ctx.cp = "b"; rerender(); };
+$("cpC").onclick = () => { ctx.cp = "c"; rerender(); };
+function inspect(li){ ctx.inspect = +li.dataset.seq; prevIdx = -2; render(); }
+$("store").addEventListener("click", e => { const li = e.target.closest(".cps li"); if (li) inspect(li); });
+$("store").addEventListener("keydown", e => { const li = e.target.closest(".cps li"); if (li && (e.key === "Enter" || e.key === " ")){ e.preventDefault(); e.stopPropagation(); inspect(li); } });
+document.addEventListener("keydown", e => {
+  if (e.target.matches("input,textarea")) return;
+  if (e.key === "ArrowRight" && idx < N){ e.preventDefault(); stop(); go(idx + 1); }
+  else if (e.key === "ArrowLeft" && idx > 0){ e.preventDefault(); stop(); prevIdx = -2; go(idx - 1); }
+  else if (e.key === " " && !e.target.matches("button,li")){ e.preventDefault(); playing ? stop() : play(); }
+});
+
+render();
+})();
+</script>
+</body>
+</html>

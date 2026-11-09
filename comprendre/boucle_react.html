@@ -1,0 +1,865 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>La boucle ReAct</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+[hidden]{display:none !important}
+/* Layout : un lecteur pas à pas. En haut les compteurs, puis la narration,
+   puis trois vues synchronisées (la boucle, la liste messages, le code), la sortie du notebook et les tokens. */
+:root{
+  --bg:#eef1f6; --surface:#ffffff; --surface-2:#e6eaf1; --line:#d2d9e4; --line-strong:#9aa6b8;
+  --fg:#121924; --muted:#576377;
+  --run:#2353cc; --run-soft:#dfe7fb; --on-run:#ffffff;
+  --pause:#a86400; --pause-soft:#fcefd8;
+  --disk:#0b7a68; --disk-soft:#dcf2ed;
+  --human:#b0236a; --human-soft:#f9e1ee;
+  --err:#c42b2b; --err-soft:#fbe3e3;
+  --term-bg:#0d1218; --term-fg:#d9e0ea; --term-muted:#7f8a9b; --term-line:#202a36;
+  --f-display:"IBM Plex Sans Condensed","Arial Narrow",system-ui,sans-serif;
+  --f-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,"Cascadia Mono",Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0c1016; --surface:#141a23; --surface-2:#1b2330; --line:#29323f; --line-strong:#56637a;
+  --fg:#e5eaf2; --muted:#94a1b5;
+  --run:#7aa2ff; --run-soft:#1c2a4a; --on-run:#0b1222;
+  --pause:#f0b03a; --pause-soft:#3a2b10;
+  --disk:#3fc8b0; --disk-soft:#0f2e2a;
+  --human:#f27bb4; --human-soft:#3a1529;
+  --err:#ff7676; --err-soft:#3a1515;
+  --term-bg:#06090d; --term-fg:#d9e0ea; --term-muted:#7f8a9b; --term-line:#1a222d;
+  color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --bg:#0c1016; --surface:#141a23; --surface-2:#1b2330; --line:#29323f; --line-strong:#56637a;
+  --fg:#e5eaf2; --muted:#94a1b5;
+  --run:#7aa2ff; --run-soft:#1c2a4a; --on-run:#0b1222;
+  --pause:#f0b03a; --pause-soft:#3a2b10;
+  --disk:#3fc8b0; --disk-soft:#0f2e2a;
+  --human:#f27bb4; --human-soft:#3a1529;
+  --err:#ff7676; --err-soft:#3a1515;
+  --term-bg:#06090d; --term-fg:#d9e0ea; --term-muted:#7f8a9b; --term-line:#1a222d;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:15px;line-height:1.5}
+.app{max-width:1440px;margin:0 auto;padding-block:20px 48px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
+  display:flex;flex-direction:column;gap:14px}
+code,.mono{font-family:var(--f-mono);font-size:.9em}
+p code,.cap-text code,.note code,.lesson code{background:var(--surface-2);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+
+/* En-tête */
+.top{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;justify-content:space-between}
+.top h1{font-family:var(--f-display);font-weight:700;font-size:clamp(26px,3.2vw,38px);line-height:1.05;margin:0;text-wrap:balance;letter-spacing:-.01em}
+.top .sub{color:var(--muted);margin:6px 0 0;max-width:76ch}
+.counters{display:flex;gap:10px;flex-wrap:wrap}
+.clock{display:flex;align-items:baseline;gap:10px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px 16px}
+.clock .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted)}
+.clock .t{font-family:var(--f-mono);font-size:30px;font-weight:600;font-variant-numeric:tabular-nums}
+.clock.c-msg .t{color:var(--disk)}
+.clock.c-call .t{color:var(--run)}
+
+/* Narration + commandes */
+.stage{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px;align-items:start;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 20px}
+.cap-step{font-size:12px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.phase-chip{font-weight:600;padding:2px 8px;border-radius:99px;letter-spacing:.05em}
+.phase-chip.p0{background:var(--surface-2);color:var(--muted)}
+.phase-chip.p1{background:var(--run-soft);color:var(--run)}
+.phase-chip.pb{background:var(--err-soft);color:var(--err)}
+.phase-chip.p2{background:var(--disk-soft);color:var(--disk)}
+.cap-title{font-family:var(--f-display);font-size:clamp(22px,2.4vw,28px);font-weight:700;margin:4px 0 6px;line-height:1.15;text-wrap:balance}
+.cap-text{font-size:16.5px;max-width:78ch;margin:0}
+.cap-text b{font-weight:600}
+.choices{display:flex;flex-wrap:wrap;gap:14px 22px;margin-top:12px;padding:12px 14px;border:1px dashed var(--human);border-radius:10px;background:var(--human-soft)}
+.choices .grp{display:flex;flex-direction:column;gap:6px;min-width:0}
+.choices .grp>span{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--human);font-weight:600}
+.choices .qtxt{font-size:13.5px;color:var(--fg);max-width:60ch}
+.seg-btns{display:flex;gap:6px;flex-wrap:wrap}
+.seg-btns button{font:inherit;font-size:14px;padding:6px 12px;border-radius:7px;border:1px solid var(--line-strong);background:var(--surface);color:var(--fg);cursor:pointer}
+.seg-btns button[aria-pressed="true"]{background:var(--human);border-color:var(--human);color:var(--surface)}
+.seg-btns button.bug[aria-pressed="true"]{background:var(--err);border-color:var(--err)}
+.controls{display:flex;flex-direction:column;gap:10px;align-items:flex-end}
+.btns{display:flex;gap:6px;flex-wrap:wrap}
+.btn{font:inherit;font-weight:600;font-size:14px;padding:9px 14px;border-radius:8px;border:1px solid var(--line-strong);background:var(--surface);color:var(--fg);cursor:pointer;white-space:nowrap}
+.btn.primary{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.btn:disabled{opacity:.35;cursor:not-allowed}
+.btn:focus-visible,.dot:focus-visible,.seg-btns button:focus-visible{outline:3px solid var(--run);outline-offset:2px}
+.dots{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;max-width:330px}
+.dot{width:17px;height:17px;border-radius:4px;border:1px solid var(--line-strong);background:var(--surface);cursor:pointer;padding:0}
+.dot.p1{border-color:var(--run)} .dot.pb{border-color:var(--err)} .dot.p2{border-color:var(--disk)}
+.dot.seen.p1{background:var(--run-soft)} .dot.seen.pb{background:var(--err-soft)} .dot.seen.p2{background:var(--disk-soft)} .dot.seen.p0{background:var(--surface-2)}
+.dot.cur{outline:2px solid var(--fg);outline-offset:1px}
+.hint{font-size:12px;color:var(--muted)}
+
+/* Trois vues */
+.views{display:grid;grid-template-columns:minmax(250px,.8fr) minmax(0,1.15fr) minmax(0,1.25fr);gap:14px;align-items:start}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px;min-width:0}
+.panel h2{font-family:var(--f-display);font-size:15px;font-weight:600;margin:0 0 2px;text-transform:uppercase;letter-spacing:.06em}
+.panel .ph{font-size:12.5px;color:var(--muted);margin:0 0 10px}
+
+/* Graphe de la boucle */
+#graph{width:100%;max-width:360px;display:block;margin:0 auto}
+#graph text{font-family:var(--f-mono);font-size:13px;fill:var(--fg)}
+#graph .elab{font-size:11px;fill:var(--muted);font-family:var(--f-body)}
+#graph .sublab{font-size:10.5px;fill:var(--muted)}
+#graph .mem{font-family:var(--f-body);font-size:11px;fill:var(--pause)}
+.edge{stroke:var(--line-strong);stroke-width:1.8;fill:none;marker-end:url(#arr)}
+.edge.trail{stroke:var(--run);opacity:.55;marker-end:url(#arrRun)}
+.edge.on{stroke:var(--run);stroke-width:3;opacity:1;stroke-dasharray:7 5;animation:flow .7s linear infinite;marker-end:url(#arrRun)}
+@keyframes flow{to{stroke-dashoffset:-12}}
+.node rect,.node circle{fill:var(--surface);stroke:var(--line-strong);stroke-width:1.6;transition:fill .3s,stroke .3s}
+.node.on rect,.node.on circle{fill:var(--run);stroke:var(--run)}
+.node.on text{fill:var(--on-run) !important}
+.node.done rect,.node.done circle{fill:var(--run-soft);stroke:var(--run)}
+.node.tool.on rect{fill:var(--disk);stroke:var(--disk)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--muted);margin-top:6px;justify-content:center}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:-2px;margin-right:5px;border:1.5px solid}
+.lg-on{background:var(--run);border-color:var(--run)} .lg-trail{background:transparent;border-color:var(--run);opacity:.6}
+
+/* Liste messages */
+.schema{border:1.5px dashed var(--line-strong);border-radius:8px;padding:7px 10px;margin-bottom:10px;font-size:12.5px}
+.schema b{font-family:var(--f-mono);font-weight:600}
+.schema.sent{border-color:var(--run);border-style:solid;background:var(--run-soft)}
+.schema pre{margin:6px 0 0;font-family:var(--f-mono);font-size:11.5px;line-height:1.5;overflow-x:auto;background:var(--surface-2);border-radius:6px;padding:6px 8px}
+.sendbar{font-size:12.5px;font-weight:600;color:var(--run);margin:0 0 6px}
+.msgs{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.msg{border:1px solid var(--line);border-left:4px solid var(--line-strong);border-radius:7px;padding:6px 9px;font-size:12.5px;background:var(--surface);min-width:0}
+.msg .mh{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.msg .mh b{font-family:var(--f-mono);font-weight:600;font-size:12.5px}
+.msg .mh span{color:var(--muted);font-size:11.5px}
+.msg .mc{font-family:var(--f-mono);font-size:11.8px;overflow-wrap:anywhere;margin-top:2px}
+.msg .tc{font-family:var(--f-mono);font-size:11.8px;overflow-wrap:anywhere;margin-top:3px;color:var(--run)}
+.mid{display:inline-block;font-family:var(--f-mono);font-size:11px;padding:0 5px;border-radius:4px;background:var(--surface-2);color:var(--fg)}
+.m-sys{border-left-color:var(--muted)}
+.m-human{border-left-color:var(--human)}
+.m-ai{border-left-color:var(--run)}
+.m-tool{border-left-color:var(--disk)}
+.msg.sent{box-shadow:0 0 0 2px var(--run-soft);border-color:color-mix(in srgb,var(--run) 45%,var(--line))}
+.msg.link .mid{background:var(--pause-soft);color:var(--pause);outline:1.5px solid var(--pause)}
+.msg.ghost{opacity:.6;border-style:dashed;background:var(--err-soft)}
+.msg.ghost .mh span{color:var(--err);font-weight:600}
+.msg.virt{border-style:dashed;background:var(--surface-2)}
+.msg.virt .mh span{color:var(--disk);font-weight:600}
+.empty{font-size:12.5px;color:var(--muted);font-style:italic}
+
+/* Code */
+.code-h{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:10px 0 4px;font-weight:600;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.code-h:first-of-type{margin-top:0}
+.code-h .bugtag{color:var(--err);text-transform:none;letter-spacing:0}
+pre.code{margin:0;background:var(--surface-2);border-radius:8px;padding:6px 0;overflow-x:auto;font-family:var(--f-mono);font-size:12.3px;line-height:1.6}
+pre.code .ln{display:block;padding:0 12px;white-space:pre;border-left:3px solid transparent;transition:background .25s}
+pre.code .ln.hl{background:var(--run-soft);border-left-color:var(--run)}
+pre.code .ln.hlt{background:var(--disk-soft);border-left-color:var(--disk)}
+pre.code .ln.hle{background:var(--err-soft);border-left-color:var(--err)}
+pre.code .ln.skip{opacity:.35}
+pre.code .ln.gone{text-decoration:line-through;text-decoration-color:var(--err);color:var(--err);opacity:.75}
+pre.code .ln.gone::after{content:"   ← ligne oubliée";text-decoration:none;display:inline-block;font-style:italic;font-weight:600}
+.k{color:var(--human)} .s{color:var(--disk)} .f{color:var(--run)} .c{color:var(--muted);font-style:italic}
+.note{margin-top:8px;border-radius:8px;padding:8px 11px;font-size:13.5px;border:1.5px solid var(--run);background:var(--run-soft)}
+.note.e{border-color:var(--err);background:var(--err-soft)}
+.note.d{border-color:var(--disk);background:var(--disk-soft)}
+
+/* Bas : sortie + tokens */
+.bottom{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;align-items:start}
+.term{background:var(--term-bg);color:var(--term-fg);border-radius:12px;overflow:hidden;border:1px solid var(--term-line);min-width:0;display:flex;flex-direction:column}
+.term-h{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 14px;border-bottom:1px solid var(--term-line);font-size:13px}
+.term-h .who{font-weight:600}
+.term-h .who small{font-weight:400;color:var(--term-muted)}
+.pill{font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:99px;text-transform:uppercase;letter-spacing:.05em;background:#222b37;color:var(--term-muted)}
+.pill.run{background:#173a2f;color:#5fe0b5}
+.term-b{padding:10px 14px 14px;font-family:var(--f-mono);font-size:12.6px;line-height:1.6;min-height:200px;overflow-x:auto}
+.term-b div{white-space:pre-wrap;overflow-wrap:anywhere}
+.term-b .sys{color:var(--term-muted);font-style:italic}
+.term-b .warn{color:#ffc561}
+.term-b .good{color:#78e2bd}
+.term-b .tool{color:#9cc2ff}
+.term-b .spin{color:var(--term-muted)}
+.term-b .spin::after{content:"";display:inline-block;width:1ch;animation:dots 1.2s steps(4) infinite}
+@keyframes dots{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
+.tok .bars{display:flex;flex-direction:column;gap:7px}
+.bar-row{display:grid;grid-template-columns:62px minmax(0,1fr) 74px;gap:8px;align-items:center;font-size:12.5px}
+.bar-row .bl{color:var(--muted);white-space:nowrap}
+.bar-row .bv{font-family:var(--f-mono);font-weight:600;text-align:right;white-space:nowrap}
+.bar{display:flex;height:18px;border-radius:5px;overflow:hidden;background:var(--surface-2)}
+.bar i{display:block;height:100%;transition:width .5s ease}
+.b-sch{background:var(--line-strong)} .b-sys{background:var(--muted)} .b-conv{background:var(--run)}
+.bar-row.same .bv{color:var(--err)}
+.tok .legend{justify-content:flex-start;margin-top:10px}
+.lg-sch{background:var(--line-strong);border-color:var(--line-strong)} .lg-sys{background:var(--muted);border-color:var(--muted)} .lg-conv{background:var(--run);border-color:var(--run)}
+.tok .fine{font-size:12px;color:var(--muted);margin:8px 0 0}
+.fresh{animation:fresh .45s ease both}
+@keyframes fresh{from{opacity:0;transform:translateY(5px)}}
+
+/* À retenir */
+.lessons{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+.lesson{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.lesson .n{font-family:var(--f-display);font-weight:700;font-size:13px;color:var(--muted);letter-spacing:.06em}
+.lesson h3{font-family:var(--f-display);font-size:18px;margin:2px 0 6px;line-height:1.2}
+.lesson p{margin:0;font-size:14px;color:var(--muted)}
+.lesson p code{color:var(--fg)}
+.sect-h{font-family:var(--f-display);font-size:20px;font-weight:700;margin:10px 0 0}
+
+@media (max-width:1180px){
+  .views{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  .views .panel.code-p{grid-column:1 / -1}
+  .lessons{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:760px){
+  .stage{grid-template-columns:1fr;padding:14px}
+  .controls{align-items:stretch}
+  .dots{justify-content:flex-start;max-width:none}
+  .views,.bottom,.lessons{grid-template-columns:1fr}
+  .clock .t{font-size:24px}
+  .btn{padding:8px 11px}
+}
+@media (prefers-reduced-motion:reduce){
+  *{animation:none !important;transition:none !important}
+}
+</style>
+</head>
+<body>
+
+<div class="app">
+  <header class="top">
+    <div>
+      <h1>La boucle ReAct, pas à pas</h1>
+      <p class="sub">L'agent N1 de NordTech SA reçoit deux outils. Le LLM demande, votre code exécute, et la liste de messages repart en entier à chaque tour. Le code est celui de <code>notebooks/_sources/build_j1_02.py</code> (notebook J1_02, §3 à §6). Les réponses du modèle sont des exemples : le texte exact varie d'un modèle et d'une exécution à l'autre.</p>
+    </div>
+    <div class="counters">
+      <div class="clock c-call" aria-label="Nombre d'appels au LLM"><span class="lbl">Appels au LLM</span><span class="t" id="kCalls">0</span></div>
+      <div class="clock c-msg" aria-label="Nombre de messages dans la liste"><span class="lbl">Messages dans la liste</span><span class="t" id="kMsgs">0</span></div>
+    </div>
+  </header>
+
+  <section class="stage" aria-live="polite">
+    <div>
+      <div class="cap-step"><span id="stepno">Étape 0 / 15</span><span class="phase-chip p0" id="phasechip">Préparer</span></div>
+      <h2 class="cap-title" id="captitle"></h2>
+      <p class="cap-text" id="captext"></p>
+      <div class="choices" id="choices" hidden>
+        <div class="grp">
+          <span>La question posée à l'agent</span>
+          <div class="seg-btns">
+            <button type="button" id="q0" aria-pressed="false">0 outil</button>
+            <button type="button" id="q1" aria-pressed="false">1 outil</button>
+            <button type="button" id="q2" aria-pressed="true">2 outils</button>
+          </div>
+          <div class="qtxt" id="qtxt"></div>
+        </div>
+        <div class="grp">
+          <span>Le code de la boucle</span>
+          <div class="seg-btns">
+            <button type="button" id="bOk" aria-pressed="true">renvoie l'historique</button>
+            <button type="button" id="bBug" class="bug" aria-pressed="false">oublie messages.append</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="controls">
+      <div class="btns">
+        <button class="btn" id="bReset" title="Recommencer">⟲</button>
+        <button class="btn" id="bPrev">◀ Précédent</button>
+        <button class="btn primary" id="bPlay">▶ Lecture</button>
+        <button class="btn" id="bNext">Suivant ▶</button>
+      </div>
+      <div class="dots" id="dots"></div>
+      <div class="hint">Clavier : ← → pour avancer, espace pour lecture/pause</div>
+    </div>
+  </section>
+
+  <div class="views">
+    <section class="panel">
+      <h2>La boucle</h2>
+      <p class="ph" id="graphph">Qui travaille à cet instant : le LLM ou votre code.</p>
+      <svg id="graph" viewBox="0 0 360 400" role="img" aria-label="Boucle : début, LLM, outils, fin">
+        <defs>
+          <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" style="fill:var(--line-strong)"/></marker>
+          <marker id="arrRun" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" style="fill:var(--run)"/></marker>
+        </defs>
+        <path class="edge" id="e_s" d="M110 40 L110 76"/>
+        <path class="edge" id="e_lt" d="M200 100 C 270 100, 290 140, 290 200"/>
+        <path class="edge" id="e_tl" d="M232 200 C 232 160, 225 132, 200 128"/>
+        <path class="edge" id="e_le" d="M110 160 L110 322"/>
+        <text class="elab" x="294" y="146">tool_calls</text>
+        <text class="elab" x="294" y="159">non vide</text>
+        <text class="elab" x="120" y="250">tool_calls</text>
+        <text class="elab" x="120" y="263">vide</text>
+
+        <g class="node" id="n-START"><circle cx="110" cy="30" r="10"/><text x="128" y="34" class="elab" id="lb-start">début</text></g>
+        <g class="node" id="n-llm"><rect x="20" y="78" width="180" height="80" rx="8"/><text x="110" y="102" text-anchor="middle" id="lb-llm">LLM</text><text x="110" y="121" text-anchor="middle" class="sublab" id="lb-llm2">llm_outils.invoke(messages)</text><text class="mem" x="110" y="143" text-anchor="middle" id="lb-mem">aucune mémoire entre deux appels</text></g>
+        <g class="node tool" id="n-tools"><rect x="180" y="202" width="170" height="64" rx="8"/><text x="265" y="228" text-anchor="middle" id="lb-tools">votre code</text><text x="265" y="248" text-anchor="middle" class="sublab" id="lb-tools2">TOOLS[nom].invoke(args)</text></g>
+        <text class="elab" x="265" y="284" text-anchor="middle" id="lb-tour"></text>
+        <g class="node" id="n-END"><circle cx="110" cy="336" r="12"/><text x="130" y="340" class="elab" id="lb-end">return reponse.content</text></g>
+      </svg>
+      <div class="legend"><span><i class="lg-on"></i>en cours</span><span><i class="lg-trail"></i>chemin déjà pris</span></div>
+    </section>
+
+    <section class="panel">
+      <h2>La liste messages</h2>
+      <p class="ph" id="msgph">La seule mémoire de la conversation. C'est elle qui part au LLM à chaque appel.</p>
+      <div id="msgs"></div>
+    </section>
+
+    <section class="panel code-p">
+      <h2>Le code</h2>
+      <p class="ph">Le code du notebook J1_02. La ligne surlignée est celle qui tourne.</p>
+      <div class="code-h"><span>Les outils (§3 et §4)</span></div>
+      <pre class="code" id="codeTools"></pre>
+      <div class="code-h"><span>La boucle à la main (§5)</span><span class="bugtag" id="bugtag"></span></div>
+      <pre class="code" id="codeLoop"></pre>
+      <div class="code-h"><span>create_agent (§6)</span></div>
+      <pre class="code" id="codeAgent"></pre>
+      <div id="note"></div>
+    </section>
+  </div>
+
+  <div class="bottom">
+    <section class="term">
+      <div class="term-h"><span class="who" id="termwho">Sortie de la cellule</span><span class="pill" id="termpill">notebook J1_02</span></div>
+      <div class="term-b" id="tb"></div>
+    </section>
+    <section class="panel tok">
+      <h2>Tokens envoyés à chaque appel</h2>
+      <p class="ph">Ce que le LLM doit relire, appel après appel. Estimation : environ 4 caractères par token.</p>
+      <div class="bars" id="bars"></div>
+      <div class="legend"><span><i class="lg-sch"></i>schémas des 2 outils</span><span><i class="lg-sys"></i>prompt système</span><span><i class="lg-conv"></i>conversation</span></div>
+      <p class="fine">Le vrai chiffre dépend du tokenizer et du gabarit de chat du modèle. Il est dans <code>reponse.usage_metadata["input_tokens"]</code> (sous Ollama, la valeur <code>prompt_eval_count</code>).</p>
+    </section>
+  </div>
+
+  <h2 class="sect-h">Ce qu'il faut retenir</h2>
+  <div class="lessons">
+    <article class="lesson"><div class="n">1 · LE SCHÉMA</div><h3>Le LLM ne voit jamais votre code</h3><p>Il reçoit le nom de l'outil, sa docstring et le schéma JSON des arguments. <code>bind_tools</code> joint ces schémas à chaque requête.</p></article>
+    <article class="lesson"><div class="n">2 · LA DEMANDE</div><h3>Le LLM demande, votre code exécute</h3><p>Le LLM renvoie un <code>AIMessage</code> avec des <code>tool_calls</code>. Votre code appelle l'outil et répond par un <code>ToolMessage</code> qui porte le même <code>tool_call_id</code>.</p></article>
+    <article class="lesson"><div class="n">3 · SANS MÉMOIRE</div><h3>Le LLM relit toute la liste à chaque appel</h3><p>La liste grandit, la requête aussi. Si le code ne renvoie pas l'historique, le modèle redemande la même chose jusqu'au garde-fou.</p></article>
+    <article class="lesson"><div class="n">4 · CREATE_AGENT</div><h3>La même boucle, en graphe</h3><p>Deux nœuds, <code>model</code> et <code>tools</code>. On sort quand l'<code>AIMessage</code> n'a plus de <code>tool_calls</code>. Le garde-fou devient <code>recursion_limit</code>.</p></article>
+  </div>
+</div>
+
+<script>
+(function(){
+"use strict";
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+/* ---------- les données du notebook J1_02 ---------- */
+const PROMPT = "Tu es l'agent support N1 de NordTech SA. Réponds en français, en une ou deux phrases. Utilise les outils pour toute information sur les serveurs ou les files de tickets ; n'invente rien.";
+const REPLI = "Je n'ai pas pu conclure : je transmets votre demande à un technicien.";
+/* Sortie réelle de convert_to_openai_tool (langchain_core 1.6.5), vérifiée sur les outils du notebook */
+const SCHEMA_1 = {type:"function", function:{name:"statut_serveur", description:"Retourne le statut (en ligne, hors ligne, dégradé) d'un serveur de l'inventaire NordTech.", parameters:{properties:{nom:{description:"nom d'hôte exact en minuscules, par exemple 'srv-mail-01'", type:"string"}}, required:["nom"], type:"object"}}};
+const SCHEMA_2 = {type:"function", function:{name:"tickets_ouverts", description:"Retourne le nombre de tickets ouverts dans une file d'attente du help-desk.", parameters:{properties:{file:{description:"nom exact de la file : 'N1', 'N2-infra' ou 'N2-applicatif'", type:"string"}}, required:["file"], type:"object"}}};
+const SCHEMAS_TXT = JSON.stringify([SCHEMA_1, SCHEMA_2]);
+
+/* Les identifiants : sous Ollama, langchain_ollama les génère avec uuid4() */
+const C_STATUT  = {name:"statut_serveur",  args:{nom:"srv-erp-02"}, res:"hors ligne"};
+const C_TICKETS = {name:"tickets_ouverts", args:{file:"N2-infra"},  res:"6 tickets ouverts dans la file N2-infra"};
+const IDS = {
+  manuel: ["6b1e0f3a-8c2d-4e57-9a41-2f7d0c9e5b13", "d47a9c21-5f3e-4b80-8e16-a0c3b7f42d95"],
+  agent:  ["0c8f5e27-3a91-4d6b-b2e4-7f1a9d03c658", "a92d4b10-6e7c-4f38-9d25-c4b8e1f07a3e"],
+  bug:    ["6b1e0f3a-8c2d-4e57-9a41-2f7d0c9e5b13", "1f4c7a92-0d3b-4e81-a6c5-58e2b9d0f714", "8e2a5d03-b7c1-4f96-8a4e-0d6f3c91b527", "3d9b1e64-2f8a-4c07-b5d3-e71a0c4f9286", "c50e8f17-9a4d-4b2c-8e63-1b7d2a0f5c98"],
+};
+const Q = [
+  {label:"0 outil",  text:"Bonjour, que peux-tu faire pour moi ?", calls:[],
+   final:"Je suis l'agent support N1 de NordTech SA. Je peux vérifier le statut d'un serveur ou le nombre de tickets ouverts dans une file."},
+  {label:"1 outil",  text:"Le serveur srv-erp-02 répond-il ?", calls:[C_STATUT],
+   final:"Non, le serveur srv-erp-02 est hors ligne."},
+  {label:"2 outils", text:"Le serveur srv-erp-02 est-il en ligne ? Et combien de tickets attendent en N2-infra ?", calls:[C_STATUT, C_TICKETS],
+   final:"Le serveur srv-erp-02 est hors ligne et 6 tickets attendent dans la file N2-infra."},
+];
+
+/* ---------- représentations Python (pour les sorties du notebook) ---------- */
+const pyStr = x => (x.includes("'") && !x.includes('"')) ? '"' + x + '"' : "'" + x.replace(/\\/g, "\\\\").replace(/'/g, "\\'") + "'";
+const pyArgs = o => "{" + Object.entries(o).map(([k, v]) => pyStr(k) + ": " + pyStr(v)).join(", ") + "}";
+const pyTC = tc => "[" + tc.map(t => `{'name': ${pyStr(t.name)}, 'args': ${pyArgs(t.args)}, 'id': ${pyStr(t.id)}, 'type': 'tool_call'}`).join(", ") + "]";
+const short = id => id.slice(0, 8) + "…";
+
+/* ---------- estimation des tokens ---------- */
+const est = str => Math.max(1, Math.round(str.length / 4));
+const EST_SCH = est(SCHEMAS_TXT), EST_SYS = est(PROMPT);
+const msgCost = m => est(m.content + (m.tc && m.tc.length ? JSON.stringify(m.tc.map(t => ({name:t.name, args:t.args, id:t.id}))) : "") + (m.tcid || ""));
+function measure(s){
+  const sent = s.msgs.filter(m => !m.ghost && !m.virt);
+  const conv = sent.filter(m => m.type !== "System").reduce((a, m) => a + msgCost(m), 0);
+  return {sch: EST_SCH, sys: EST_SYS, conv, tot: EST_SCH + EST_SYS + conv, n: sent.length + (s.mode === "agent" ? 1 : 0)};
+}
+const SCALE = (function(){
+  const q = Q[2]; let conv = est(q.text);
+  q.calls.forEach((c, i) => { conv += est("" + JSON.stringify([{name:c.name, args:c.args, id:IDS.manuel[i]}])) + est(c.res + IDS.manuel[i]); });
+  return (EST_SCH + EST_SYS + conv) * 1.08;
+})();
+
+/* ---------- le code affiché ---------- */
+function codeTools(){ return [
+  ["t1", '<span class="f">@tool</span>(parse_docstring=<span class="k">True</span>)'],
+  ["t2", '<span class="k">def</span> <span class="f">statut_serveur</span>(nom: str) -> str:'],
+  ["t3", '    <span class="s">"""Retourne le statut (en ligne, hors ligne, dégradé) d\'un serveur de l\'inventaire NordTech.</span>'],
+  ["t4", '<span class="s">    Args:</span>'],
+  ["t5", '<span class="s">        nom: nom d\'hôte exact en minuscules, par exemple \'srv-mail-01\'</span>'],
+  ["t6", '<span class="s">    """</span>'],
+  ["t7", '    <span class="k">return</span> INVENTAIRE.get(nom.strip().lower(), <span class="s">f"inconnu : \'{nom}\' n\'est pas dans l\'inventaire"</span>)'],
+  ["t8", '<span class="f">@tool</span>(parse_docstring=<span class="k">True</span>)'],
+  ["t9", '<span class="k">def</span> <span class="f">tickets_ouverts</span>(file: str) -> str: …   <span class="c"># même forme, lit TICKETS_OUVERTS</span>'],
+  ["t10", 'TOOLS = {t.name: t <span class="k">for</span> t <span class="k">in</span> (statut_serveur, tickets_ouverts)}'],
+  ["t11", 'llm_outils = llm.<span class="f">bind_tools</span>(list(TOOLS.values()))'],
+]; }
+function codeLoop(){ return [
+  ["l0", '<span class="f">@observe</span>(name=<span class="s">"react-manuel"</span>)'],
+  ["l1", '<span class="k">def</span> <span class="f">agent_react_manuel</span>(question: str, max_tours: int = 5) -> str:'],
+  ["l2", '    messages = [<span class="f">SystemMessage</span>(PROMPT_SYSTEME), <span class="f">HumanMessage</span>(question)]'],
+  ["l3", '    <span class="k">for</span> tour <span class="k">in</span> range(1, max_tours + 1):   <span class="c"># garde-fou : jamais de boucle infinie</span>'],
+  ["l4", '        reponse = llm_outils.<span class="f">invoke</span>(messages, config=…)'],
+  ["l5", '        messages.<span class="f">append</span>(reponse)'],
+  ["l6", '        <span class="k">if not</span> reponse.tool_calls:   <span class="c"># plus d\'outil demandé -> réponse finale</span>'],
+  ["l7", '            <span class="f">print</span>(<span class="s">f"  ✔ réponse au tour {tour}"</span>)'],
+  ["l8", '            <span class="k">return</span> reponse.content'],
+  ["l9", '        <span class="k">for</span> appel <span class="k">in</span> reponse.tool_calls:   <span class="c"># exécuter chaque outil demandé</span>'],
+  ["l10", '            <span class="f">print</span>(<span class="s">f"  ↳ tour {tour} : {appel[\'name\']}({appel[\'args\']})"</span>)'],
+  ["l11", '            resultat = TOOLS[appel[<span class="s">"name"</span>]].<span class="f">invoke</span>(appel[<span class="s">"args"</span>], config=…)'],
+  ["l12", '            messages.<span class="f">append</span>(<span class="f">ToolMessage</span>(content=resultat, tool_call_id=appel[<span class="s">"id"</span>]))'],
+  ["l13", '    <span class="k">return</span> <span class="s">"Je n\'ai pas pu conclure : je transmets votre demande à un technicien."</span>'],
+]; }
+function codeAgent(c){ return [
+  ["a1", 'agent = <span class="f">create_agent</span>('],
+  ["a2", '    model=llm,'],
+  ["a3", '    tools=[statut_serveur, tickets_ouverts],'],
+  ["a4", '    system_prompt=PROMPT_SYSTEME,'],
+  ["a5", ')'],
+  ["a6", 'resultat = agent.<span class="f">invoke</span>('],
+  ["a7", '    {<span class="s">"messages"</span>: [{<span class="s">"role"</span>: <span class="s">"user"</span>, <span class="s">"content"</span>: <span class="s">' + esc(JSON.stringify(Q[c.q].text)) + '</span>}]},'],
+  ["a8", '    config={<span class="s">"callbacks"</span>: [langfuse_handler], <span class="s">"run_name"</span>: <span class="s">"create-agent"</span>, <span class="s">"recursion_limit"</span>: 10},'],
+  ["a9", ')'],
+  ["a10", '<span class="k">for</span> message <span class="k">in</span> resultat[<span class="s">"messages"</span>]: <span class="f">print</span>(…)'],
+]; }
+
+/* ---------- le modèle ---------- */
+let KEY = 0;
+const msg = (type, content, extra) => Object.assign({type, content, key: ++KEY}, extra || {});
+function initial(){
+  KEY = 0;
+  return {
+    mode: "manuel", msgs: [], calls: [], callsId: "manuel", schema: 0,
+    term: [], termId: "s3", termTitle: "Sortie de la cellule · §3", trail: [], done: [],
+    nCalls: 0, sameFrom: null,
+  };
+}
+function resetTransient(s){
+  s.active = null; s.edge = null; s.code = []; s.codeCls = "hl"; s.skip = [];
+  s.note = null; s.link = null; s.sending = false; s.choices = false; s.running = false; s.tour = "";
+}
+const goEdge = (s, node, edge) => { s.active = node; s.edge = edge; if (edge && !s.trail.includes(edge)) s.trail.push(edge); };
+function invoke(s, k){
+  s.nCalls = k; s.calls.push(measure(s)); s.sending = true; s.running = true;
+  goEdge(s, "llm", k === 1 ? "e_s" : "e_tl"); s.tour = "";
+  s.code = ["l4"];
+}
+const St = (ph, dur, f) => { f.ph = ph; f.dur = dur; return f; };
+
+/* ---------- les étapes ---------- */
+function makeSteps(c){
+  const q = Q[c.q];
+  const A = [
+    St("p0", 6000, (s) => {
+      s.code = ["t1","t2","t3","t4","t5","t6","t7","t8","t9"];
+      s.term = [{x:"hors ligne"}, {x:"6 tickets ouverts dans la file N2-infra"}];
+      s.title = "Deux outils pour HelpDesk-Ops";
+      s.text = "L'agent de NordTech SA reçoit deux outils en lecture seule. <code>statut_serveur</code> lit l'inventaire, <code>tickets_ouverts</code> compte les tickets d'une file. Le décorateur <code>@tool</code> en fait des objets que LangChain sait décrire. Un outil reste une fonction : on le teste sans LLM, et <code>statut_serveur.invoke({\"nom\": \"SRV-ERP-02\"})</code> renvoie « hors ligne ».";
+    }),
+    St("p0", 6500, (s) => {
+      s.schema = 2; s.code = ["t1","t3","t4","t5","t6"]; s.skip = ["t7"];
+      s.title = "Le LLM ne voit jamais votre code";
+      s.text = "<code>convert_to_openai_tool</code> montre ce que le modèle reçoit : le nom de la fonction, la description tirée de la docstring et le schéma JSON des arguments. Avec <code>parse_docstring=True</code>, l'argument <code>nom</code> porte sa description. Le corps de la fonction ne part jamais : une docstring vague donne un outil mal utilisé.";
+    }),
+    St("p0", 6000, (s) => {
+      s.schema = 1; s.code = ["t10","t11"];
+      s.title = "bind_tools : les schémas partent avec chaque requête";
+      s.text = "<code>llm.bind_tools([...])</code> ne modifie pas le modèle. Il renvoie un modèle qui joint les deux schémas à chaque appel. Le dictionnaire <code>TOOLS</code> servira à retrouver la fonction à partir du nom que le LLM demandera.";
+    }),
+    St(c.oubli && q.calls.length ? "pb" : "p1", 8000, (s) => {
+      s.schema = 1; s.termId = "s5"; s.termTitle = "Sortie de la cellule · §5"; s.term = [];
+      s.msgs.push(msg("System", PROMPT), msg("Human", q.text));
+      s.code = ["l1","l2"]; s.choices = true; goEdge(s, "START", null);
+      s.title = "La question et la liste de messages";
+      s.text = "La boucle commence avec une liste de deux messages : le prompt système de l'agent N1 et la question. Cette liste est la seule mémoire de la conversation. <b>Choisissez la question ci-dessous.</b> Essayez aussi le code qui oublie <code>messages.append</code> : que se passe-t-il si on ne renvoie pas l'historique ?";
+    }),
+  ];
+
+  const L = [];
+  if (c.oubli && q.calls.length){
+    const call = q.calls[0];
+    const tcAt = k => [{name: call.name, args: call.args, id: IDS.bug[k]}];
+    const ghostAI = k => msg("AI", "", {tc: tcAt(k), ghost: true});
+    L.push(St("pb", 6500, (s) => {
+      invoke(s, 1);
+      s.title = "Appel n°1 : rien ne change encore";
+      s.text = `Le premier appel est le même : 2 messages et les 2 schémas, environ <b>${s.calls[0].tot} tokens</b>. Regardez le code : les deux lignes <code>messages.append(...)</code> ont disparu.`;
+    }));
+    L.push(St("pb", 6500, (s) => {
+      s.nCalls = 1; goEdge(s, "llm", null);
+      s.msgs.push(ghostAI(0)); s.code = ["l5","l6"]; s.codeCls = "hle"; s.link = IDS.bug[0];
+      s.title = "La réponse n'est pas gardée";
+      s.text = `Le modèle demande <code>${call.name}</code> avec <code>${esc(pyArgs(call.args))}</code>. Le code teste <code>reponse.tool_calls</code>, mais n'ajoute pas l'AIMessage à la liste. La demande vit dans la variable <code>reponse</code>, jusqu'au tour suivant.`;
+    }));
+    L.push(St("pb", 6500, (s) => {
+      s.nCalls = 1; goEdge(s, "tools", "e_lt"); s.tour = "tour 1";
+      s.msgs.push(msg("Tool", call.res, {tcid: IDS.bug[0], ghost: true})); s.link = IDS.bug[0];
+      s.term.push({c:"tool", x:`  ↳ tour 1 : ${call.name}(${pyArgs(call.args)})`});
+      s.code = ["l9","l10","l11","l12"]; s.codeCls = "hle";
+      s.title = "L'outil tourne, son résultat est perdu";
+      s.text = `Le code exécute <code>${call.name}</code> et obtient « ${esc(call.res)} ». Le ToolMessage est créé, puis jeté. La liste contient toujours <b>2 messages</b>.`;
+    }));
+    L.push(St("pb", 7000, (s) => {
+      s.msgs = s.msgs.filter(m => !m.ghost);
+      invoke(s, 2); s.sameFrom = 1;
+      s.title = "Appel n°2 : exactement la même requête";
+      s.text = `Le code renvoie la liste : les 2 mêmes messages. Pour le modèle, c'est la première fois qu'il voit cette question. Il ne sait pas qu'il a déjà demandé l'outil, ni ce que l'outil a répondu. La requête pèse toujours environ <b>${s.calls[1].tot} tokens</b>.`;
+    }));
+    L.push(St("pb", 6500, (s) => {
+      s.nCalls = 2; goEdge(s, "tools", "e_lt"); s.tour = "tour 2";
+      s.msgs.push(ghostAI(1)); s.link = IDS.bug[1];
+      s.term.push({c:"tool", x:`  ↳ tour 2 : ${call.name}(${pyArgs(call.args)})`});
+      s.code = ["l9","l10","l11"]; s.codeCls = "hle";
+      s.title = "Il redemande le même outil";
+      s.text = "Même entrée, même <code>temperature=0</code> : le modèle redemande très probablement le même outil, avec les mêmes arguments. Seul l'id change. Le terminal affiche une deuxième fois la même ligne. L'outil tourne encore, pour rien.";
+    }));
+    L.push(St("pb", 7000, (s) => {
+      s.msgs = s.msgs.filter(m => !m.ghost);
+      for (let k = 3; k <= 5; k++){ s.calls.push(measure(s)); s.term.push({c:"tool", x:`  ↳ tour ${k} : ${call.name}(${pyArgs(call.args)})`}); }
+      s.nCalls = 5; goEdge(s, "tools", "e_lt"); s.tour = "tours 3, 4, 5";
+      s.code = ["l3","l4","l9","l10","l11"]; s.codeCls = "hle";
+      s.title = "Tours 3, 4 et 5 : la même chose";
+      s.text = "La scène se répète à chaque tour. Le modèle ne progresse pas et chaque appel coûte autant que le premier. Dans le graphique des tokens, les barres restent plates : rien ne s'accumule. Sans limite, cette boucle ne s'arrêterait jamais.";
+    }));
+    L.push(St("pb", 7500, (s) => {
+      s.nCalls = 5; goEdge(s, "END", null);
+      s.term.push({c:"warn", x: REPLI});
+      s.code = ["l13"]; s.codeCls = "hle";
+      s.note = {cls:"e", h:"<b>La correction tient en deux lignes :</b> <code>messages.append(reponse)</code> après l'appel au LLM, et <code>messages.append(ToolMessage(...))</code> après chaque outil."};
+      s.title = "Le garde-fou max_tours coupe la boucle";
+      s.text = "Après le tour 5, la boucle <code>for</code> se termine. La fonction renvoie le repli explicite : « Je n'ai pas pu conclure : je transmets votre demande à un technicien. » Cinq appels au LLM, cinq exécutions d'outil, aucune réponse.";
+    }));
+  } else {
+    q.calls.forEach((call, i) => {
+      const id = IDS.manuel[i];
+      L.push(St("p1", 6500, (s) => {
+        invoke(s, i + 1);
+        const m = s.calls[i];
+        if (i === 0){
+          s.title = "Appel n°1 : le LLM lit toute la liste";
+          s.text = `<code>llm_outils.invoke(messages)</code> envoie les ${m.n} messages et les 2 schémas, environ <b>${m.tot} tokens</b>. Le modèle ne garde rien d'un appel à l'autre : tout ce qu'il sait est dans cette requête.`;
+        } else {
+          s.title = `Appel n°${i + 1} : on renvoie tout`;
+          s.text = `La liste contient maintenant <b>${m.n} messages</b>. Le code les renvoie tous, avec les schémas. Le modèle relit la question, sa propre demande et le résultat de l'outil, comme s'il les découvrait. Environ <b>${m.tot} tokens</b>, contre ${s.calls[0].tot} au premier appel.`;
+        }
+      }));
+      L.push(St("p1", 6500, (s) => {
+        s.nCalls = i + 1; goEdge(s, "llm", null);
+        s.msgs.push(msg("AI", "", {tc: [{name: call.name, args: call.args, id}]})); s.link = id;
+        s.code = ["l5","l6"];
+        if (i === 0){
+          s.title = "Le LLM demande, il n'exécute rien";
+          s.text = `Le modèle renvoie un <code>AIMessage</code> au <code>content</code> vide. Son champ <code>tool_calls</code> contient la demande : <code>${call.name}</code> avec <code>${esc(pyArgs(call.args))}</code>, et un id. Le code ajoute ce message à la liste. <code>tool_calls</code> n'est pas vide : on ne sort pas.`;
+        } else {
+          s.title = "Deuxième demande";
+          s.text = `Le modèle a lu « hors ligne ». Il lui manque le nombre de tickets : il demande <code>${call.name}</code> avec <code>${esc(pyArgs(call.args))}</code>. Nouvel AIMessage, nouvel id, ajouté à la liste.`;
+          s.note = {cls:"", h:"Un modèle peut aussi demander les deux outils dans <b>un seul</b> AIMessage. La boucle <code>for appel in reponse.tool_calls</code> les exécute alors l'un après l'autre, et il n'y a que deux appels au LLM."};
+        }
+      }));
+      L.push(St("p1", 6500, (s) => {
+        s.nCalls = i + 1; goEdge(s, "tools", "e_lt"); s.tour = "tour " + (i + 1);
+        s.msgs.push(msg("Tool", call.res, {tcid: id})); s.link = id;
+        s.term.push({c:"tool", x:`  ↳ tour ${i + 1} : ${call.name}(${pyArgs(call.args)})`});
+        s.code = ["l9","l10","l11","l12"]; s.codeCls = "hlt";
+        s.title = i === 0 ? "Votre code exécute l'outil" : "Le code exécute le deuxième outil";
+        s.text = i === 0
+          ? `La boucle <code>for</code> lit le nom demandé, retrouve la fonction dans <code>TOOLS</code> et l'appelle avec les arguments. Le résultat, « ${esc(call.res)} », part dans un <code>ToolMessage</code>. Son <code>tool_call_id</code> reprend l'id de la demande : c'est ce qui relie la réponse à la question.`
+          : `Même mécanique : <code>${call.name}</code> renvoie « ${esc(call.res)} ». Le nouveau <code>ToolMessage</code> porte l'id de la deuxième demande. La liste compte maintenant <b>${s.msgs.length} messages</b>.`;
+      }));
+    });
+    const k = q.calls.length;
+    L.push(St("p1", 6500, (s) => {
+      invoke(s, k + 1);
+      const m = s.calls[k];
+      if (k === 0){
+        s.title = "Appel n°1 : le LLM lit toute la liste";
+        s.text = `<code>llm_outils.invoke(messages)</code> envoie les 2 messages et les 2 schémas, environ <b>${m.tot} tokens</b>. Le modèle ne garde rien d'un appel à l'autre : tout ce qu'il sait est dans cette requête.`;
+      } else {
+        s.title = `Appel n°${k + 1} : le LLM a tout sous les yeux`;
+        s.text = `Le code renvoie les <b>${m.n} messages</b> : la question, ${k === 1 ? "la demande d'outil et son résultat" : "les deux demandes et leurs résultats"}. Environ <b>${m.tot} tokens</b>, contre ${s.calls[0].tot} au premier appel. Cette fois, le modèle a de quoi répondre.`;
+      }
+    }));
+    L.push(St("p1", 7000, (s) => {
+      s.nCalls = k + 1; goEdge(s, "END", "e_le");
+      s.msgs.push(msg("AI", q.final, {tc: []}));
+      s.term.push({c:"good", x:`  ✔ réponse au tour ${k + 1}`}, {x: q.final});
+      s.code = ["l5","l6","l7","l8"];
+      if (k === 0){
+        s.title = "Le modèle répond directement";
+        s.text = "Le modèle a reçu les schémas, mais il juge qu'aucun outil n'est utile. Son <code>AIMessage</code> contient du texte et <code>tool_calls</code> est vide. C'est la condition d'arrêt : la boucle s'arrête dès le tour 1 et renvoie <code>reponse.content</code>.";
+      } else {
+        s.title = "Pas de tool_calls : la boucle s'arrête";
+        s.text = `Cette fois, l'<code>AIMessage</code> contient du texte et aucun <code>tool_calls</code>. C'est la condition d'arrêt naturelle. Le code affiche « ✔ réponse au tour ${k + 1} » et renvoie <code>reponse.content</code>. Bilan : ${k + 1} appels au LLM, ${s.msgs.length} messages dans la liste.`;
+      }
+    }));
+    if (k === 0){
+      L.push(St("p1", 7000, (s) => {
+        s.nCalls = 1; s.schemaHot = true;
+        const m = s.calls[0];
+        s.title = "Les schémas ont voyagé quand même";
+        s.text = `Même sans appel d'outil, les deux schémas faisaient partie de la requête : environ <b>${m.sch} tokens sur ${m.tot}</b>. Chaque outil ajouté alourdit chaque appel. Au-delà d'une dizaine d'outils, le choix du modèle se dégrade aussi.`;
+        if (c.oubli) s.note = {cls:"e", h:"Vous avez choisi le code qui oublie <code>messages.append</code>. Ici, l'oubli ne se voit pas : la boucle s'arrête au premier tour. Choisissez une question avec outil pour voir le problème."};
+      }));
+    }
+  }
+
+  /* create_agent : la même boucle */
+  const path = ["model"]; q.calls.forEach(() => path.push("tools", "model"));
+  const E = [
+    St("p2", 7000, (s) => {
+      s.mode = "agent"; s.msgs = []; s.calls = []; s.callsId = "agent"; s.trail = []; s.nCalls = 0;
+      s.termId = "s6"; s.termTitle = "Sortie de la cellule · §6"; s.term = [];
+      s.code = ["a1","a2","a3","a4","a5"]; s.codeCls = "hlt";
+      s.title = "create_agent : la même boucle, empaquetée";
+      s.text = "<code>create_agent</code> reçoit le modèle, les outils et le prompt système. Il appelle <code>bind_tools</code> lui-même et construit la boucle. Le résultat est un <code>CompiledStateGraph</code> LangGraph à deux nœuds : <code>model</code> appelle le LLM, <code>tools</code> exécute les outils.";
+    }),
+    St("p2", 8000, (s) => {
+      const ids = IDS.agent;
+      s.msgs.push(msg("System", PROMPT, {virt: true}), msg("Human", q.text));
+      s.trail = ["e_s"];
+      q.calls.forEach((call, i) => {
+        s.calls.push(measure(s));
+        s.msgs.push(msg("AI", "", {tc: [{name: call.name, args: call.args, id: ids[i]}]}));
+        s.msgs.push(msg("Tool", call.res, {tcid: ids[i]}));
+        if (!s.trail.includes("e_lt")) s.trail.push("e_lt", "e_tl");
+      });
+      s.calls.push(measure(s));
+      s.msgs.push(msg("AI", q.final, {tc: []}));
+      s.nCalls = q.calls.length + 1;
+      goEdge(s, "END", "e_le");
+      s.code = ["a6","a7","a8","a9"]; s.codeCls = "hlt";
+      s.note = {cls: c.oubli && q.calls.length ? "e" : "d", h: "Les nœuds renvoient seulement leurs <b>nouveaux</b> messages. Le réducteur <code>add_messages</code> de l'état les ajoute à la liste." + (c.oubli && q.calls.length ? " L'oubli de tout à l'heure devient impossible : personne n'écrit <code>messages.append</code>." : "")};
+      s.title = "Le même parcours, nœud par nœud";
+      s.text = `<code>agent.invoke(...)</code> refait la boucle. Après <code>model</code>, la route va vers <code>tools</code> s'il y a des <code>tool_calls</code>, sinon vers la fin. Pour cette question : <b>${path.join(" → ")} → fin</b>. ${s.nCalls} appel${s.nCalls > 1 ? "s" : ""} au LLM, et la requête grandit comme à la main.`;
+    }),
+    St("p2", 8000, (s) => {
+      s.nCalls = q.calls.length + 1;
+      const lines = s.msgs.filter(m => !m.virt).map(m => {
+        const name = (m.type + "Message").padEnd(13, " ");
+        const tc = (m.type === "AI" && m.tc && m.tc.length) ? pyTC(m.tc) : "";
+        return {x: `${name} ${pyStr(m.content.slice(0, 90))} ${tc}`};
+      });
+      s.term = lines.concat([{x:""}, {x:"Type de l'agent : CompiledStateGraph"}]);
+      s.code = ["a10"]; s.codeCls = "hlt"; s.sysHot = true;
+      s.title = "Le prompt système n'est pas dans l'état";
+      s.text = "<code>resultat[\"messages\"]</code> commence par le <code>HumanMessage</code>. Le prompt système n'y est pas stocké : le nœud <code>model</code> le place en tête de la liste à chaque appel au LLM. Le modèle le relit donc à chaque tour, comme dans la boucle à la main.";
+    }),
+    St("p2", 7500, (s) => {
+      s.nCalls = q.calls.length + 1; s.code = ["a8"]; s.codeCls = "hlt";
+      s.title = "Le garde-fou devient recursion_limit";
+      s.text = `À la main, <code>max_tours=5</code> arrêtait la boucle avec une phrase de repli. Avec <code>create_agent</code>, c'est <code>"recursion_limit": 10</code> dans la config : elle compte les pas du graphe. Ici, <code>model</code> et <code>tools</code> tournent ${path.length} fois en tout, et il faut une limite d'au moins ${path.length + 1}. Au-delà de la limite, LangGraph lève <code>GraphRecursionError</code> : à vous d'attraper l'erreur et de prévoir le repli.`;
+    }),
+    St("p2", 8000, (s) => {
+      s.nCalls = q.calls.length + 1; s.choices = true;
+      const a = s.calls[0].tot, b = s.calls[s.calls.length - 1].tot;
+      s.title = "Bilan";
+      s.text = `Le LLM décide, votre code exécute, la liste de messages porte toute la mémoire. Elle grandit à chaque tour, et la requête avec elle : ${s.calls.length} appel${s.calls.length > 1 ? "s" : ""}, de ≈ ${a} à ≈ ${b} tokens. <code>create_agent</code> écrit cette boucle pour vous, sous forme de graphe. En J1-03, vous la dessinerez vous-même avec <code>StateGraph</code>. Changez de question ci-dessous pour rejouer.`;
+    }),
+  ];
+  return A.concat(L, E);
+}
+
+/* ---------- état de lecture ---------- */
+const ctx = { q: 2, oubli: false };
+const CHOICE_STEP = 3;
+let STEPS = makeSteps(ctx), N = STEPS.length - 1;
+let idx = 0, prevIdx = -1, playing = false, timer = null, prevModel = null;
+let seen = new Set([0]);
+const PH = {p0:"Préparer", p1:"Boucle à la main", pb:"Historique oublié", p2:"create_agent"};
+
+function build(i){
+  const s = initial();
+  for (let k = 0; k <= i; k++){ resetTransient(s); s.phase = STEPS[k].ph; s.schemaHot = false; s.sysHot = false; STEPS[k](s, ctx); }
+  return s;
+}
+
+/* ---------- rendu ---------- */
+function renderGraph(s){
+  const ag = s.mode === "agent";
+  $("lb-start").textContent = ag ? "__start__" : "début";
+  $("lb-llm").textContent = ag ? "model" : "LLM";
+  $("lb-llm2").textContent = ag ? "SystemMessage + messages" : "llm_outils.invoke(messages)";
+  $("lb-tools").textContent = ag ? "tools" : "votre code";
+  $("lb-tools2").textContent = ag ? "exécute les tool_calls" : "TOOLS[nom].invoke(args)";
+  $("lb-end").textContent = ag ? "__end__" : "return reponse.content";
+  $("lb-tour").textContent = s.tour;
+  $("graphph").textContent = ag ? "Le graphe construit par create_agent : les mêmes deux rôles." : "Qui travaille à cet instant : le LLM ou votre code.";
+  ["START","llm","tools","END"].forEach(n => {
+    const g = $("n-" + n); g.classList.remove("on","done");
+    if (s.active === n) g.classList.add("on");
+  });
+  ["e_s","e_lt","e_tl","e_le"].forEach(e => {
+    const p = $(e); p.classList.remove("on","trail");
+    if (s.edge === e) p.classList.add("on"); else if (s.trail.includes(e)) p.classList.add("trail");
+  });
+}
+
+function renderMsgs(s, pm){
+  const prevKeys = new Set(pm ? pm.msgs.map(m => m.key) : s.msgs.map(m => m.key));
+  const sameMode = pm && pm.mode === s.mode;
+  let h = "";
+  if (s.schema === 2){
+    h += `<div class="schema"><b>convert_to_openai_tool(statut_serveur)</b><pre>${esc(JSON.stringify(SCHEMA_1, null, 2))}</pre><div style="margin-top:6px">tickets_ouverts : même forme, avec l'argument <b>file</b>.</div></div>`;
+  } else if (s.schema === 1 || s.mode === "agent"){
+    const sent = s.sending || s.schemaHot;
+    h += `<div class="schema${sent ? " sent" : ""}">Schémas joints par <b>bind_tools</b> : <b>statut_serveur</b>, <b>tickets_ouverts</b>. Ils partent avec chaque requête.</div>`;
+  }
+  if (s.sending){
+    const m = s.calls[s.calls.length - 1];
+    h += `<p class="sendbar">Envoyé au LLM à l'appel n°${s.nCalls} : ${m.n} messages + 2 schémas, ≈ ${m.tot} tokens</p>`;
+  }
+  if (!s.msgs.length){
+    h += `<div class="empty">${s.mode === "agent" ? "L'agent n'a pas encore été appelé." : "La liste n'existe pas encore : la boucle n'a pas commencé."}</div>`;
+  } else {
+    h += `<ol class="msgs">` + s.msgs.map((m, i) => {
+      const cls = ["msg", {System:"m-sys", Human:"m-human", AI:"m-ai", Tool:"m-tool"}[m.type]];
+      if (s.sending && !m.ghost && !m.virt) cls.push("sent");
+      if (m.virt) cls.push("virt");
+      if (m.ghost) cls.push("ghost");
+      if (s.link && ((m.tc && m.tc.some(t => t.id === s.link)) || m.tcid === s.link)) cls.push("link");
+      if (!prevKeys.has(m.key) || (pm && !sameMode)) cls.push("fresh");
+      let tag = m.ghost ? "pas ajouté à la liste" : m.virt ? (s.sysHot ? "absent de resultat[\"messages\"]" : "ajouté par model à chaque appel") : "messages[" + s.msgs.filter((x, j) => j < i && !x.ghost && !x.virt).length + "]";
+      let body = "";
+      if (m.type === "System") body = `<div class="mc">${esc(m.content)}</div>`;
+      else if (m.type === "Human") body = `<div class="mc">${esc(m.content)}</div>`;
+      else if (m.type === "AI"){
+        body = `<div class="mc">content : ${esc(JSON.stringify(m.content))}</div>`;
+        body += m.tc.length
+          ? m.tc.map(t => `<div class="tc">tool_calls : ${esc(t.name)}(${esc(pyArgs(t.args))}) <span class="mid">id ${short(t.id)}</span></div>`).join("")
+          : `<div class="tc">tool_calls : []</div>`;
+      } else body = `<div class="mc">content : ${esc(JSON.stringify(m.content))}</div><div class="tc">tool_call_id <span class="mid">${short(m.tcid)}</span></div>`;
+      return `<li class="${cls.join(" ")}"><div class="mh"><b>${m.type}Message</b><span>${tag}</span></div>${body}</li>`;
+    }).join("") + `</ol>`;
+  }
+  $("msgs").innerHTML = h;
+}
+
+function renderCode(s){
+  const bug = ctx.oubli && idx >= CHOICE_STEP;
+  const fill = (el, rows) => { $(el).innerHTML = rows.map(([id, html]) => `<span class="ln" data-l="${id}">${html}</span>`).join(""); };
+  fill("codeTools", codeTools()); fill("codeLoop", codeLoop()); fill("codeAgent", codeAgent(ctx));
+  document.querySelectorAll("pre.code .ln").forEach(l => {
+    const id = l.dataset.l;
+    if (bug && (id === "l5" || id === "l12")) { l.classList.add("gone"); if (s.code.includes(id)) l.classList.add("hle"); return; }
+    if (s.code.includes(id)) l.classList.add(s.codeCls);
+    else if (s.skip.includes(id)) l.classList.add("skip");
+  });
+  $("bugtag").textContent = bug ? "version avec l'oubli" : "";
+  $("note").innerHTML = s.note ? `<div class="note ${s.note.cls}">${s.note.h}</div>` : "";
+}
+
+function renderTerm(s, pm){
+  $("termwho").textContent = s.termTitle;
+  const freshFrom = pm && pm.termId === s.termId ? pm.term.length : (pm ? 0 : 1e9);
+  let h = s.term.map((l, i) => `<div class="${l.c || ""}${i >= freshFrom ? " fresh" : ""}">${esc(l.x) || "&nbsp;"}</div>`).join("");
+  if (s.running) h += `<div class="spin">   le LLM réfléchit</div>`;
+  if (!s.term.length && !s.running) h = `<div class="sys">${s.termId === "s6" ? "La cellule create_agent n'a pas encore tourné." : "La cellule n'a encore rien affiché."}</div>`;
+  $("tb").innerHTML = h;
+  const pill = $("termpill");
+  pill.className = "pill" + (s.running ? " run" : "");
+  pill.textContent = s.running ? "en cours" : "notebook J1_02";
+}
+
+function renderBars(s, pm){
+  const freshFrom = pm && pm.callsId === s.callsId ? pm.calls.length : (pm ? 0 : 1e9);
+  if (!s.calls.length){ $("bars").innerHTML = `<div class="empty">Aucun appel au LLM pour l'instant.</div>`; return; }
+  const pct = v => (100 * v / SCALE).toFixed(1) + "%";
+  $("bars").innerHTML = s.calls.map((c, i) => {
+    const same = i > 0 && c.tot === s.calls[0].tot && s.sameFrom != null;
+    return `<div class="bar-row${same ? " same" : ""}${i >= freshFrom ? " fresh" : ""}"><span class="bl">Appel ${i + 1}</span><div class="bar" title="${c.n} messages"><i class="b-sch" style="width:${pct(c.sch)}"></i><i class="b-sys" style="width:${pct(c.sys)}"></i><i class="b-conv" style="width:${pct(c.conv)}"></i></div><span class="bv">≈ ${c.tot}</span></div>`;
+  }).join("");
+}
+
+function renderChoices(){
+  ["q0","q1","q2"].forEach((b, i) => $(b).setAttribute("aria-pressed", ctx.q === i));
+  $("bOk").setAttribute("aria-pressed", !ctx.oubli);
+  $("bBug").setAttribute("aria-pressed", ctx.oubli);
+  $("qtxt").textContent = "« " + Q[ctx.q].text + " »";
+}
+
+function buildDots(){
+  $("dots").innerHTML = STEPS.map((f, i) => `<button class="dot ${f.ph}" aria-label="Aller à l'étape ${i}" data-i="${i}"></button>`).join("");
+}
+
+function render(){
+  const s = build(idx);
+  const forward = idx === prevIdx + 1;
+  const pm = forward ? prevModel : null;
+
+  $("stepno").textContent = `Étape ${idx} / ${N}`;
+  const chip = $("phasechip"); chip.className = "phase-chip " + s.phase; chip.textContent = PH[s.phase];
+  $("captitle").textContent = s.title;
+  $("captext").innerHTML = s.text;
+  $("choices").hidden = !s.choices;
+  renderChoices();
+
+  $("kCalls").textContent = s.nCalls;
+  $("kMsgs").textContent = s.msgs.filter(m => !m.ghost && !m.virt).length;
+
+  renderGraph(s);
+  renderMsgs(s, pm);
+  renderCode(s);
+  renderTerm(s, pm);
+  renderBars(s, pm);
+
+  $("bPrev").disabled = idx === 0;
+  $("bNext").disabled = idx === N;
+  $("bPlay").disabled = idx === N;
+  seen.add(idx);
+  $("dots").querySelectorAll(".dot").forEach((d, i) => {
+    d.classList.toggle("cur", i === idx);
+    d.classList.toggle("seen", seen.has(i));
+  });
+  if (idx === N && playing) stop();
+  prevModel = s; prevIdx = idx;
+}
+
+/* ---------- commandes ---------- */
+function go(i){ idx = Math.max(0, Math.min(N, i)); render(); if (playing) schedule(); }
+function schedule(){ clearTimeout(timer); timer = setTimeout(() => { if (idx < N) { idx++; render(); if (playing) schedule(); } }, STEPS[idx].dur); }
+function play(){ if (idx === N) return; playing = true; $("bPlay").textContent = "❚❚ Pause"; schedule(); }
+function stop(){ playing = false; clearTimeout(timer); $("bPlay").textContent = "▶ Lecture"; }
+
+function setChoice(fn){
+  stop(); fn();
+  STEPS = makeSteps(ctx); N = STEPS.length - 1;
+  seen = new Set([...seen].filter(i => i <= CHOICE_STEP));
+  buildDots();
+  idx = CHOICE_STEP; prevIdx = -2; render();
+}
+
+buildDots();
+$("dots").addEventListener("click", e => { const b = e.target.closest(".dot"); if (b){ stop(); prevIdx = -2; go(+b.dataset.i); } });
+$("bNext").onclick = () => { stop(); go(idx + 1); };
+$("bPrev").onclick = () => { stop(); prevIdx = -2; go(idx - 1); };
+$("bPlay").onclick = () => playing ? stop() : play();
+$("bReset").onclick = () => { stop(); ctx.q = 2; ctx.oubli = false; STEPS = makeSteps(ctx); N = STEPS.length - 1; buildDots(); seen = new Set(); prevIdx = -2; go(0); };
+["q0","q1","q2"].forEach((b, i) => { $(b).onclick = () => setChoice(() => { ctx.q = i; }); });
+$("bOk").onclick = () => setChoice(() => { ctx.oubli = false; });
+$("bBug").onclick = () => setChoice(() => { ctx.oubli = true; });
+document.addEventListener("keydown", e => {
+  if (e.target.matches("input,textarea")) return;
+  if (e.key === "ArrowRight" && idx < N){ e.preventDefault(); stop(); go(idx + 1); }
+  else if (e.key === "ArrowLeft" && idx > 0){ e.preventDefault(); stop(); prevIdx = -2; go(idx - 1); }
+  else if (e.key === " " && !e.target.matches("button")){ e.preventDefault(); playing ? stop() : play(); }
+});
+
+render();
+})();
+</script>
+</body>
+</html>

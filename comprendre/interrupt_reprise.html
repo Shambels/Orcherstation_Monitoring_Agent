@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
 <style>
+[hidden]{display:none !important}
 /* Layout : un lecteur pas à pas. En haut l'horloge et la frise des deux processus, puis la narration,
    puis trois vues synchronisées (graphe, checkpointer, code) et les deux terminaux. */
 :root{
@@ -94,7 +95,7 @@ p code,.cap-text code{background:var(--surface-2);padding:1px 5px;border-radius:
 .thread-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .thread-row input{font-family:var(--f-mono);font-size:14px;width:12ch;padding:6px 8px;border-radius:7px;border:1px solid var(--line-strong);background:var(--surface);color:var(--fg)}
 .controls{display:flex;flex-direction:column;gap:10px;align-items:flex-end}
-.btns{display:flex;gap:6px}
+.btns{display:flex;gap:6px;flex-wrap:wrap}
 .btn{font:inherit;font-weight:600;font-size:14px;padding:9px 14px;border-radius:8px;border:1px solid var(--line-strong);background:var(--surface);color:var(--fg);cursor:pointer;white-space:nowrap}
 .btn.primary{background:var(--fg);color:var(--bg);border-color:var(--fg)}
 .btn:disabled{opacity:.35;cursor:not-allowed}

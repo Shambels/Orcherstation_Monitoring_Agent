@@ -1,0 +1,986 @@
+<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>StateGraph et reducers</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout : un lecteur pas à pas. En haut le compteur de super-steps (la frise), puis la narration,
+   puis trois vues synchronisées (graphe, état, code) et le terminal. */
+:root{
+  --bg:#eef1f6; --surface:#ffffff; --surface-2:#e6eaf1; --line:#d2d9e4; --line-strong:#9aa6b8;
+  --fg:#121924; --muted:#576377;
+  --run:#2353cc; --run-soft:#dfe7fb; --on-run:#ffffff;
+  --pause:#a86400; --pause-soft:#fcefd8;
+  --disk:#0b7a68; --disk-soft:#dcf2ed;
+  --human:#b0236a; --human-soft:#f9e1ee;
+  --err:#c42b2b; --err-soft:#fbe3e3;
+  --term-bg:#0d1218; --term-fg:#d9e0ea; --term-muted:#7f8a9b; --term-line:#202a36;
+  --f-display:"IBM Plex Sans Condensed","Arial Narrow",system-ui,sans-serif;
+  --f-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,"Cascadia Mono",Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0c1016; --surface:#141a23; --surface-2:#1b2330; --line:#29323f; --line-strong:#56637a;
+  --fg:#e5eaf2; --muted:#94a1b5;
+  --run:#7aa2ff; --run-soft:#1c2a4a; --on-run:#0b1222;
+  --pause:#f0b03a; --pause-soft:#3a2b10;
+  --disk:#3fc8b0; --disk-soft:#0f2e2a;
+  --human:#f27bb4; --human-soft:#3a1529;
+  --err:#ff7676; --err-soft:#3a1515;
+  --term-bg:#06090d; --term-fg:#d9e0ea; --term-muted:#7f8a9b; --term-line:#1a222d;
+  color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --bg:#0c1016; --surface:#141a23; --surface-2:#1b2330; --line:#29323f; --line-strong:#56637a;
+  --fg:#e5eaf2; --muted:#94a1b5;
+  --run:#7aa2ff; --run-soft:#1c2a4a; --on-run:#0b1222;
+  --pause:#f0b03a; --pause-soft:#3a2b10;
+  --disk:#3fc8b0; --disk-soft:#0f2e2a;
+  --human:#f27bb4; --human-soft:#3a1529;
+  --err:#ff7676; --err-soft:#3a1515;
+  --term-bg:#06090d; --term-fg:#d9e0ea; --term-muted:#7f8a9b; --term-line:#1a222d;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:15px;line-height:1.5;overflow-x:hidden}
+.app{max-width:1440px;margin:0 auto;padding-block:20px 48px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
+  display:flex;flex-direction:column;gap:14px}
+code,.mono{font-family:var(--f-mono);font-size:.9em}
+p code,.cap-text code,.note code,.lesson code{background:var(--surface-2);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+
+/* En-tête */
+.top{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;justify-content:space-between}
+.top h1{font-family:var(--f-display);font-weight:700;font-size:clamp(26px,3.2vw,38px);line-height:1.05;margin:0;text-wrap:balance;letter-spacing:-.01em}
+.top .sub{color:var(--muted);margin:6px 0 0;max-width:72ch}
+.clock{display:flex;align-items:baseline;gap:12px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px 16px}
+.clock .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted)}
+.clock .t{font-family:var(--f-mono);font-size:30px;font-weight:600;font-variant-numeric:tabular-nums;min-width:2ch;text-align:center}
+.clock .gap{font-family:var(--f-mono);font-size:13px;color:var(--pause);min-width:9ch}
+
+/* Frise : le compteur de super-steps */
+.ladder-wrap{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 14px}
+.ladder-h{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 14px;font-size:12.5px;color:var(--muted);margin-bottom:8px}
+.ladder-h b{font-family:var(--f-mono);color:var(--fg);font-weight:600}
+.ladder{display:flex;flex-wrap:wrap;gap:4px}
+.cell{flex:1 1 52px;max-width:96px;min-width:46px;border-radius:6px;padding:4px 6px;font-size:11.5px;line-height:1.2;border:1px dashed var(--line-strong);background:transparent;min-height:42px;transition:background .3s,border-color .3s}
+.cell b{display:block;font-family:var(--f-mono);font-size:13px;font-weight:600}
+.cell span{display:block;color:var(--muted);font-family:var(--f-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cell.done{border:1px solid var(--run);background:var(--run-soft)}
+.cell.on{border:1px solid var(--run);background:var(--run)}
+.cell.on b,.cell.on span{color:var(--on-run)}
+.cell.ok{border:1.5px solid var(--disk);background:var(--disk-soft)}
+.cell.ok span{color:var(--disk)}
+.cell.limit{border:1.5px dashed var(--err);background:repeating-linear-gradient(135deg,var(--err-soft) 0 6px,transparent 6px 11px)}
+.cell.limit span{color:var(--err)}
+.cell.boom{border:2px solid var(--err);background:var(--err-soft)}
+.cell.boom b,.cell.boom span{color:var(--err)}
+.cell.par{border:1px solid var(--pause);background:var(--pause-soft)}
+.cell.par.on{background:var(--pause);border-color:var(--pause)}
+.cell.par.on b,.cell.par.on span{color:var(--surface)}
+
+/* Narration + commandes */
+.stage{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px;align-items:start;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 20px}
+.cap-step{font-size:12px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.phase-chip{font-weight:600;padding:2px 8px;border-radius:99px;letter-spacing:.05em}
+.phase-chip.p0{background:var(--surface-2);color:var(--muted)}
+.phase-chip.p1{background:var(--run-soft);color:var(--run)}
+.phase-chip.pz{background:var(--pause-soft);color:var(--pause)}
+.phase-chip.p2{background:var(--human-soft);color:var(--human)}
+.cap-title{font-family:var(--f-display);font-size:clamp(22px,2.4vw,28px);font-weight:700;margin:4px 0 6px;line-height:1.15;text-wrap:balance}
+.cap-text{font-size:16.5px;max-width:78ch;margin:0}
+.cap-text b{font-weight:600}
+.choices{display:flex;flex-wrap:wrap;gap:14px 22px;margin-top:12px;padding:12px 14px;border:1px dashed var(--human);border-radius:10px;background:var(--human-soft)}
+.choices .grp{display:flex;flex-direction:column;gap:6px;min-width:0}
+.choices .grp[hidden]{display:none}
+.choices .grp>span{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--human);font-weight:600}
+.seg-btns{display:flex;gap:6px;flex-wrap:wrap}
+.seg-btns button{font:inherit;font-size:14px;padding:6px 12px;border-radius:7px;border:1px solid var(--line-strong);background:var(--surface);color:var(--fg);cursor:pointer}
+.seg-btns button.mono{font-family:var(--f-mono);font-size:13px}
+.seg-btns button[aria-pressed="true"]{background:var(--human);border-color:var(--human);color:var(--surface)}
+.controls{display:flex;flex-direction:column;gap:10px;align-items:flex-end}
+.btns{display:flex;gap:6px;flex-wrap:wrap}
+.btn{font:inherit;font-weight:600;font-size:14px;padding:9px 14px;border-radius:8px;border:1px solid var(--line-strong);background:var(--surface);color:var(--fg);cursor:pointer;white-space:nowrap}
+.btn.primary{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.btn:disabled{opacity:.35;cursor:not-allowed}
+.btn:focus-visible,.dot:focus-visible,.seg-btns button:focus-visible{outline:3px solid var(--run);outline-offset:2px}
+.dots{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;max-width:330px}
+.dot{width:17px;height:17px;border-radius:4px;border:1px solid var(--line-strong);background:var(--surface);cursor:pointer;padding:0}
+.dot.p1{border-color:var(--run)} .dot.pz{border-color:var(--pause)} .dot.p2{border-color:var(--human)}
+.dot.seen.p1{background:var(--run-soft)} .dot.seen.pz{background:var(--pause-soft)} .dot.seen.p2{background:var(--human-soft)} .dot.seen.p0{background:var(--surface-2)}
+.dot.cur{outline:2px solid var(--fg);outline-offset:1px}
+.hint{font-size:12px;color:var(--muted)}
+
+/* Trois vues */
+.views{display:grid;grid-template-columns:minmax(250px,.8fr) minmax(0,1.2fr) minmax(0,1.2fr);gap:14px;align-items:start}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px;min-width:0}
+.panel h2{font-family:var(--f-display);font-size:15px;font-weight:600;margin:0 0 2px;text-transform:uppercase;letter-spacing:.06em}
+.panel .ph{font-size:12.5px;color:var(--muted);margin:0 0 10px}
+
+/* Graphe */
+#graph{width:100%;max-width:360px;display:block;margin:0 auto;transition:opacity .3s}
+#graph.dim{opacity:.35}
+#graph text{font-family:var(--f-mono);font-size:13px;fill:var(--fg)}
+#graph .elab{font-size:10.5px;fill:var(--muted);font-family:var(--f-body)}
+.edge{stroke:var(--line-strong);stroke-width:1.8;fill:none;marker-end:url(#arr)}
+.edge.cond{stroke-dasharray:5 4}
+.edge.trail{stroke:var(--run);opacity:.55;marker-end:url(#arrRun)}
+.edge.on{stroke:var(--run);stroke-width:3;opacity:1;stroke-dasharray:7 5;animation:flow .7s linear infinite;marker-end:url(#arrRun)}
+@keyframes flow{to{stroke-dashoffset:-12}}
+.node rect,.node circle{fill:var(--surface);stroke:var(--line-strong);stroke-width:1.6;transition:fill .3s,stroke .3s}
+.node.done rect,.node.done circle{fill:var(--run-soft);stroke:var(--run)}
+.node.on rect,.node.on circle{fill:var(--run);stroke:var(--run)}
+.node.on text{fill:var(--on-run)}
+.node.par rect{fill:var(--pause);stroke:var(--pause)}
+.node.par text{fill:var(--surface)}
+.node.err rect{fill:var(--err-soft);stroke:var(--err);stroke-width:2.5}
+#mini{display:none} #main{display:inline}
+#graph.mini #mini{display:inline} #graph.mini #main{display:none}
+.routebox{margin:8px auto 0;max-width:360px;font-family:var(--f-mono);font-size:12.5px;border:1.5px solid var(--run);background:var(--run-soft);border-radius:8px;padding:6px 10px;overflow-wrap:anywhere}
+.routebox span{display:block;font-family:var(--f-body);font-size:12.5px;color:var(--muted)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--muted);margin-top:8px;justify-content:center}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:-2px;margin-right:5px;border:1.5px solid}
+.legend .ln-fixed,.legend .ln-cond{display:inline-block;width:22px;height:0;border-top:2px solid var(--line-strong);vertical-align:3px;margin-right:5px}
+.legend .ln-cond{border-top-style:dashed}
+.lg-on{background:var(--run);border-color:var(--run)} .lg-done{background:var(--run-soft);border-color:var(--run)}
+
+/* État */
+.upd{border:1.5px solid var(--run);background:var(--run-soft);border-radius:8px;padding:8px 10px;margin-bottom:10px}
+.upd.par{border-color:var(--pause);background:var(--pause-soft)}
+.upd h3,.grp-h{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 4px;font-weight:600}
+.upd h3 b{color:var(--fg);text-transform:none;letter-spacing:0;font-family:var(--f-mono)}
+.upd pre{margin:0;font-family:var(--f-mono);font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere}
+.rows{display:flex;flex-direction:column;gap:5px}
+.row{display:grid;grid-template-columns:minmax(64px,auto) minmax(0,1fr) auto;gap:4px 10px;align-items:start;padding:6px 8px;border-radius:7px;background:var(--surface-2);border:1.5px solid transparent;transition:background .3s,border-color .3s}
+.row .key{grid-column:1;grid-row:1;font-family:var(--f-mono);font-weight:600;font-size:12.5px}
+.row .red{grid-column:1;grid-row:2;font-size:11px;color:var(--muted)}
+.row .red.has{color:var(--disk);font-weight:600}
+.row .val{grid-column:2;grid-row:1 / span 2;font-family:var(--f-mono);font-size:12px;overflow-wrap:anywhere;min-width:0}
+.row .val .absent{color:var(--muted);font-style:italic;font-family:var(--f-body)}
+.row .tag{grid-column:3;grid-row:1 / span 2;font-size:11px;font-weight:600;padding:2px 7px;border-radius:99px;white-space:nowrap;align-self:center}
+.row.read{border-color:var(--line-strong)}
+.row.rep{border-color:var(--run);background:var(--run-soft)} .row.rep .tag{background:var(--run);color:var(--on-run)}
+.row.add{border-color:var(--disk);background:var(--disk-soft)} .row.add .tag{background:var(--disk);color:var(--surface)}
+.row.lost{border-color:var(--err);background:var(--err-soft)} .row.lost .tag{background:var(--err);color:var(--surface)}
+.row.same .tag{background:var(--surface);color:var(--muted);border:1px solid var(--line)}
+.row.read .tag{background:var(--surface);color:var(--fg);border:1px solid var(--line-strong)}
+.msgs{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:3px}
+.msgs li{border-left:3px solid var(--line-strong);padding:1px 0 1px 6px}
+.msgs li i{font-style:normal;color:var(--muted)}
+.msgs li.h{border-left-color:var(--human)} .msgs li.a{border-left-color:var(--run)} .msgs li.t{border-left-color:var(--disk)}
+.msgs li.gone{text-decoration:line-through;opacity:.55;border-left-color:var(--err)}
+.msgs li.newm{font-weight:600}
+.empty{font-size:12.5px;color:var(--muted);font-style:italic;margin:6px 0}
+.cols3{display:grid;grid-template-columns:1fr;gap:8px}
+.box{border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-family:var(--f-mono);font-size:12px}
+.box.res{border:1.5px solid var(--disk);background:var(--disk-soft)}
+.box.bad{border:1.5px solid var(--err);background:var(--err-soft)}
+.box.bad b{color:var(--err)}
+.box .grp-h{font-family:var(--f-body)}
+.kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:3px 12px;font-family:var(--f-mono);font-size:12.5px;margin:0}
+.kv dt{color:var(--muted)} .kv dd{margin:0;overflow-wrap:anywhere}
+.kv dd.bad{color:var(--err);font-weight:600} .kv dd.good{color:var(--disk);font-weight:600}
+
+/* Code */
+.code-h{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:10px 0 4px;font-weight:600;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.code-h:first-child{margin-top:0}
+.code-h small{text-transform:none;letter-spacing:0;font-weight:400;font-family:var(--f-mono)}
+pre.code{margin:0;background:var(--surface-2);border-radius:8px;padding:6px 0;overflow-x:auto;font-family:var(--f-mono);font-size:12.3px;line-height:1.6}
+pre.code .ln{display:block;padding:0 12px;white-space:pre;border-left:3px solid transparent;transition:background .25s}
+pre.code .ln.hl{background:var(--run-soft);border-left-color:var(--run)}
+pre.code .ln.hlp{background:var(--pause-soft);border-left-color:var(--pause)}
+pre.code .ln.hlh{background:var(--human-soft);border-left-color:var(--human)}
+pre.code .ln.hle{background:var(--err-soft);border-left-color:var(--err)}
+pre.code .ln.skip{opacity:.35}
+.k{color:var(--human)} .s{color:var(--disk)} .f{color:var(--run)} .c{color:var(--muted);font-style:italic}
+.note{margin-top:8px;border-radius:8px;padding:8px 11px;font-size:13.5px;border:1.5px solid var(--run);background:var(--run-soft);overflow-wrap:anywhere}
+.note.p{border-color:var(--pause);background:var(--pause-soft)}
+.note.h{border-color:var(--human);background:var(--human-soft)}
+.note.e{border-color:var(--err);background:var(--err-soft)}
+
+/* Terminal */
+.term{background:var(--term-bg);color:var(--term-fg);border-radius:12px;overflow:hidden;border:1px solid var(--term-line);min-width:0;display:flex;flex-direction:column;transition:opacity .4s}
+.term.idle{opacity:.6}
+.term-h{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 14px;border-bottom:1px solid var(--term-line);font-size:13px}
+.term-h .who{font-weight:600;min-width:0;overflow-wrap:anywhere}
+.term-h .who small{font-weight:400;color:var(--term-muted)}
+.pill{font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:99px;text-transform:uppercase;letter-spacing:.05em;background:#222b37;color:var(--term-muted)}
+.pill.run{background:#173a2f;color:#5fe0b5}
+.pill.dead{background:#222b37;color:var(--term-fg)}
+.pill.bad{background:#3a1d1d;color:#ff9a9a}
+.term-b{padding:10px 14px 14px;font-family:var(--f-mono);font-size:12.6px;line-height:1.6;min-height:150px;overflow-x:auto}
+.term-b div{white-space:pre-wrap;overflow-wrap:anywhere}
+.term-b .cmd{color:#9cc2ff}
+.term-b .sys{color:var(--term-muted);font-style:italic}
+.term-b .warn{color:#ffc561}
+.term-b .bad{color:#ff8f8f}
+.term-b .good{color:#78e2bd}
+.term-b .spin{color:var(--term-muted)}
+.term-b .spin::after{content:"";display:inline-block;width:1ch;animation:dots 1.2s steps(4) infinite}
+@keyframes dots{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
+.fresh{animation:fresh .45s ease both}
+@keyframes fresh{from{opacity:0;transform:translateY(5px)}}
+
+/* À retenir */
+.lessons{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+.lesson{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.lesson .n{font-family:var(--f-display);font-weight:700;font-size:13px;color:var(--muted);letter-spacing:.06em}
+.lesson h3{font-family:var(--f-display);font-size:18px;margin:2px 0 6px;line-height:1.2}
+.lesson p{margin:0;font-size:14px;color:var(--muted)}
+.lesson p code{color:var(--fg)}
+.sect-h{font-family:var(--f-display);font-size:20px;font-weight:700;margin:10px 0 0}
+
+@media (max-width:1180px){
+  .views{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  .views .panel.code-p{grid-column:1 / -1}
+  .lessons{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:760px){
+  .stage{grid-template-columns:1fr;padding:14px}
+  .controls{align-items:stretch}
+  .dots{justify-content:flex-start;max-width:none}
+  .views,.lessons{grid-template-columns:1fr}
+  .clock .t{font-size:24px}
+  .btn{padding:8px 10px}
+  .cell{flex-basis:44px;min-width:40px}
+}
+@media (prefers-reduced-motion:reduce){
+  *{animation:none !important;transition:none !important}
+}
+</style>
+</head>
+<body>
+
+<div class="app">
+  <header class="top">
+    <div>
+      <h1>StateGraph et reducers, pas à pas</h1>
+      <p class="sub">Un ticket arrive chez HelpDesk-Ops. Chaque nœud lit l'état complet et renvoie une mise à jour, que LangGraph fusionne clé par clé. Le code est celui de <code>construction/etape_03_stategraph.py</code> et du notebook J1-03 (<code>notebooks/_sources/build_j1_03.py</code>).</p>
+    </div>
+    <div class="clock" aria-label="Super-step en cours">
+      <span class="lbl">Super-step</span>
+      <span class="t" id="ssno">–</span>
+      <span class="gap" id="limno"></span>
+    </div>
+  </header>
+
+  <section class="ladder-wrap" aria-label="Compteur de super-steps">
+    <div class="ladder-h"><span id="ladcap"></span><span id="ladcap2"></span></div>
+    <div class="ladder" id="ladder"></div>
+  </section>
+
+  <section class="stage" aria-live="polite">
+    <div>
+      <div class="cap-step"><span id="stepno">Étape 0 / 17</span><span class="phase-chip p0" id="phasechip">Le plan</span></div>
+      <h2 class="cap-title" id="captitle"></h2>
+      <p class="cap-text" id="captext"></p>
+      <div class="choices" id="choices" hidden>
+        <div class="grp" id="gRed">
+          <span>Le reducer de messages</span>
+          <div class="seg-btns">
+            <button type="button" class="mono" id="rAdd" aria-pressed="true">add_messages (MessagesState)</button>
+            <button type="button" class="mono" id="rNone" aria-pressed="false">aucun (messages: list)</button>
+          </div>
+        </div>
+        <div class="grp" id="gJr">
+          <span>Le reducer de journal</span>
+          <div class="seg-btns">
+            <button type="button" class="mono" id="jAdd" aria-pressed="true">operator.add</button>
+            <button type="button" class="mono" id="jNone" aria-pressed="false">aucun (list[str])</button>
+          </div>
+        </div>
+        <div class="grp" id="gLim">
+          <span>recursion_limit dans config</span>
+          <div class="seg-btns" id="limBtns"></div>
+        </div>
+        <div class="grp" id="gBeh">
+          <span>Ce que fait le modèle</span>
+          <div class="seg-btns">
+            <button type="button" id="bRep" aria-pressed="false">répond après un outil</button>
+            <button type="button" id="bLoop" aria-pressed="true">redemande l'outil sans fin</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="controls">
+      <div class="btns">
+        <button class="btn" id="bReset" title="Recommencer">⟲</button>
+        <button class="btn" id="bPrev">◀ Précédent</button>
+        <button class="btn primary" id="bPlay">▶ Lecture</button>
+        <button class="btn" id="bNext">Suivant ▶</button>
+      </div>
+      <div class="dots" id="dots"></div>
+      <div class="hint">Clavier : ← → pour avancer, espace pour lecture/pause</div>
+    </div>
+  </section>
+
+  <div class="views">
+    <section class="panel">
+      <h2>Le graphe</h2>
+      <p class="ph" id="graphph">Le nœud en cours, le chemin déjà parcouru.</p>
+      <svg id="graph" viewBox="0 0 360 290" role="img" aria-label="Graphe : START, trier, agent, tools, END">
+        <defs>
+          <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" style="fill:var(--line-strong)"/></marker>
+          <marker id="arrRun" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" style="fill:var(--run)"/></marker>
+        </defs>
+        <g id="main">
+          <path class="edge" id="e_st" d="M180 34 L180 58"/>
+          <path class="edge" id="e_ta" d="M180 100 L180 138"/>
+          <path class="edge cond" id="e_at" d="M245 152 L266 152"/>
+          <path class="edge" id="e_tt" d="M268 170 L247 170"/>
+          <path class="edge cond" id="e_ae" d="M180 180 L180 246"/>
+          <text class="elab" x="236" y="136">outil ?</text>
+          <text class="elab" x="188" y="218">pas d'outil</text>
+          <g class="node" id="n-START"><circle cx="180" cy="24" r="10"/><text x="198" y="28" class="elab">START</text></g>
+          <g class="node" id="n-trier"><rect x="125" y="60" width="110" height="40" rx="8"/><text x="180" y="85" text-anchor="middle">trier</text></g>
+          <g class="node" id="n-agent"><rect x="115" y="140" width="130" height="40" rx="8"/><text x="180" y="165" text-anchor="middle">agent</text></g>
+          <g class="node" id="n-tools"><rect x="268" y="140" width="84" height="40" rx="8"/><text x="310" y="165" text-anchor="middle">tools</text></g>
+          <g class="node" id="n-END"><circle cx="180" cy="260" r="12"/><text x="200" y="264" class="elab">END</text></g>
+        </g>
+        <g id="mini">
+          <path class="edge" id="m_sa" d="M172 31 L112 108"/>
+          <path class="edge" id="m_sb" d="M188 31 L248 108"/>
+          <path class="edge" id="m_ae" d="M110 150 L172 246"/>
+          <path class="edge" id="m_be" d="M250 150 L188 246"/>
+          <g class="node" id="n-mSTART"><circle cx="180" cy="24" r="10"/><text x="198" y="28" class="elab">START</text></g>
+          <g class="node" id="n-a"><rect x="50" y="110" width="110" height="40" rx="8"/><text x="105" y="135" text-anchor="middle">a</text></g>
+          <g class="node" id="n-b"><rect x="200" y="110" width="110" height="40" rx="8"/><text x="255" y="135" text-anchor="middle">b</text></g>
+          <g class="node" id="n-mEND"><circle cx="180" cy="260" r="12"/><text x="200" y="264" class="elab">END</text></g>
+        </g>
+      </svg>
+      <div id="route"></div>
+      <div class="legend"><span><i class="lg-on"></i>en cours</span><span><i class="lg-done"></i>déjà exécuté</span><span><span class="ln-fixed"></span>arête fixe</span><span><span class="ln-cond"></span>arête conditionnelle</span></div>
+    </section>
+
+    <section class="panel">
+      <h2>L'état</h2>
+      <p class="ph" id="stateph">Les clés de l'état, leur reducer, leur valeur.</p>
+      <div id="state"></div>
+    </section>
+
+    <section class="panel code-p">
+      <h2>Le code</h2>
+      <p class="ph">La ligne surlignée est celle qui compte à cette étape.</p>
+      <div id="code"></div>
+      <div id="note"></div>
+    </section>
+  </div>
+
+  <section class="term idle" id="term">
+    <div class="term-h"><span class="who" id="termwho"></span><span class="pill" id="pill">pas lancé</span></div>
+    <div class="term-b" id="tb"></div>
+  </section>
+
+  <h2 class="sect-h">Ce qu'il faut retenir</h2>
+  <div class="lessons">
+    <article class="lesson"><div class="n">1 · LE NŒUD</div><h3>Il lit tout l'état et renvoie une mise à jour</h3><p>Un nœud reçoit l'état complet dans <code>state</code>. Il renvoie un dict avec les seules clés qu'il change. Il ne modifie jamais <code>state</code> sur place.</p></article>
+    <article class="lesson"><div class="n">2 · LES REDUCERS</div><h3>Sans reducer, la valeur est remplacée</h3><p><code>add_messages</code> ajoute les messages et remplace celui qui a le même id. <code>operator.add</code> concatène les listes. Oublier le reducer de <code>messages</code> efface l'historique sans erreur.</p></article>
+    <article class="lesson"><div class="n">3 · LE ROUTAGE</div><h3>Arête fixe ou fonction de routage</h3><p><code>add_edge</code> donne toujours le même suivant. <code>add_conditional_edges</code> appelle une fonction qui lit l'état. <code>tools_condition</code> renvoie <code>"tools"</code> ou <code>"__end__"</code>.</p></article>
+    <article class="lesson"><div class="n">4 · LA LIMITE</div><h3>recursion_limit compte les super-steps</h3><p>Défaut installé : 10 007. Avec une limite L, LangGraph lève <code>GraphRecursionError</code> au moment d'entrer dans le super-step L+1. N nœuds en série demandent donc une limite d'au moins N+1. Fixez-la et prévoyez un repli.</p></article>
+  </div>
+</div>
+
+<script>
+(function(){
+"use strict";
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const TICKET = "srv-erp-02 est-il en ligne ?";
+const LIMITS = [3, 4, 5, 10, 25];
+const ERRMSG = L => `langgraph.errors.GraphRecursionError: Recursion limit of ${L} reached without hitting a stop condition. You can increase the limit by setting the \`recursion_limit\` config key.`;
+const ERRURL = "For troubleshooting, visit: https://docs.langchain.com/oss/python/langgraph/errors/GRAPH_RECURSION_LIMIT";
+
+/* ---------- les messages du fil rouge ---------- */
+const M_H  = {t:"h", ty:"HumanMessage", txt:"[logiciel · P3] " + TICKET};
+const M_A1 = {t:"a", ty:"AIMessage", txt:"tool_calls : statut_serveur({'nom': 'srv-erp-02'})"};
+const M_T  = {t:"t", ty:"ToolMessage", txt:"hors ligne"};
+const M_A2 = {t:"a", ty:"AIMessage", txt:"srv-erp-02 est hors ligne. Je vous propose d'ouvrir un ticket."};
+const M_A2x= {t:"a", ty:"AIMessage", txt:"… (réponse imprévisible)"};
+
+/* ---------- le code affiché (dépend des choix) ---------- */
+function codeFor(s, c){
+  if (s.scene === "B1") return [
+    {h:"Notebook J1-03 · section 4", lines:[
+      ["h1", 'historique = [<span class="f">HumanMessage</span>(<span class="s">"Mon VPN est coupé"</span>, id=<span class="s">"m1"</span>), <span class="f">AIMessage</span>(<span class="s">"Je vérifie srv-vpn-01…"</span>, id=<span class="s">"m2"</span>)]'],
+      ["h2", '<span class="c"># add_messages AJOUTE un nouveau message…</span>'],
+      ["h3", '<span class="f">print</span>([m.content <span class="k">for</span> m <span class="k">in</span> <span class="f">add_messages</span>(historique, [<span class="f">AIMessage</span>(<span class="s">"srv-vpn-01 est en ligne."</span>, id=<span class="s">"m3"</span>)])])'],
+      ["h4", '<span class="c"># …et REMPLACE un message qui porte le même id (utile pour corriger ou caviarder un message)</span>'],
+      ["h5", '<span class="f">print</span>([m.content <span class="k">for</span> m <span class="k">in</span> <span class="f">add_messages</span>(historique, [<span class="f">AIMessage</span>(<span class="s">"Je vérifie le VPN."</span>, id=<span class="s">"m2"</span>)])])'],
+    ]}];
+  if (s.scene === "B2") return [
+    {h:"Notebook J1-03 · section 4 · « Pourquoi c'est vital en parallèle »", lines:[
+      ["p1", '<span class="k">class</span> <span class="f">SansReducer</span>(TypedDict):'],
+      ["p2", '    journal: list[str]'],
+      ["p3", '<span class="k">class</span> <span class="f">AvecReducer</span>(TypedDict):'],
+      ["p4", '    journal: Annotated[list[str], operator.add]'],
+      ["p5", '<span class="k">def</span> <span class="f">etape_a</span>(state) -> dict:'],
+      ["p6", '    <span class="k">return</span> {<span class="s">"journal"</span>: [<span class="s">"A : ticket reçu"</span>]}'],
+      ["p7", '<span class="k">def</span> <span class="f">etape_b</span>(state) -> dict:'],
+      ["p8", '    <span class="k">return</span> {<span class="s">"journal"</span>: [<span class="s">"B : ticket classé"</span>]}'],
+      ["p9", 'b.<span class="f">add_edge</span>(START, <span class="s">"a"</span>)   <span class="c"># START -> a et START -> b : les deux s\'exécutent dans la même étape</span>'],
+      ["p10",'b.<span class="f">add_edge</span>(START, <span class="s">"b"</span>)'],
+    ]}];
+  const lim = s.scene === "C" && s.limEdited ? c.lim : 10;
+  const blocks = [
+    {h:"L'état et le câblage", lines:[
+      ["s1", c.red === "add"
+        ? '<span class="k">class</span> <span class="f">EtatTicket</span>(MessagesState):   <span class="c"># apporte messages et add_messages</span>'
+        : '<span class="k">class</span> <span class="f">EtatTicket</span>(TypedDict):        <span class="c"># reducer retiré</span>'],
+      ["s0", c.red === "add"
+        ? '    <span class="c"># messages: Annotated[list[AnyMessage], add_messages]   (hérité)</span>'
+        : '    messages: list                  <span class="c"># aucun reducer : la valeur est remplacée</span>'],
+      ["s2", '    ticket: str'],
+      ["s3", '    categorie: str'],
+      ["s4", '    priorite: str'],
+      ["s5", '    file: str'],
+      ["w1", 'builder = <span class="f">StateGraph</span>(EtatTicket)'],
+      ["w2", 'builder.<span class="f">add_node</span>(<span class="s">"trier"</span>, trier)'],
+      ["w3", 'builder.<span class="f">add_node</span>(<span class="s">"agent"</span>, agent)'],
+      ["w4", 'builder.<span class="f">add_node</span>(<span class="s">"tools"</span>, <span class="f">ToolNode</span>(OUTILS))'],
+      ["w5", 'builder.<span class="f">add_edge</span>(START, <span class="s">"trier"</span>)'],
+      ["w6", 'builder.<span class="f">add_edge</span>(<span class="s">"trier"</span>, <span class="s">"agent"</span>)'],
+      ["w7", 'builder.<span class="f">add_conditional_edges</span>(<span class="s">"agent"</span>, tools_condition)   <span class="c"># un appel d\'outil → "tools", sinon → END</span>'],
+      ["w8", 'builder.<span class="f">add_edge</span>(<span class="s">"tools"</span>, <span class="s">"agent"</span>)                        <span class="c"># après l\'outil, on revient à l\'agent : la boucle</span>'],
+      ["w9", 'graphe = builder.<span class="f">compile</span>()'],
+    ]},
+    {h:"Les nœuds", lines:[
+      ["t1", '<span class="k">def</span> <span class="f">trier</span>(state: EtatTicket) -> dict:'],
+      ["t2", '    brute = tri.<span class="f">invoke</span>({<span class="s">"ticket"</span>: state[<span class="s">"ticket"</span>], <span class="s">"categories"</span>: <span class="s">", "</span>.join(CATEGORIES)})'],
+      ["t3", '    categorie = <span class="f">normaliser_categorie</span>(brute)'],
+      ["t4", '    priorite = <span class="f">estimer_priorite</span>(state[<span class="s">"ticket"</span>])'],
+      ["t5", '    <span class="k">return</span> {<span class="s">"categorie"</span>: categorie, <span class="s">"priorite"</span>: priorite, <span class="s">"file"</span>: <span class="f">file_attente</span>(categorie),'],
+      ["t6", '            <span class="s">"messages"</span>: [<span class="f">HumanMessage</span>(<span class="s">f"[{categorie} · {priorite}] {state[\'ticket\']}"</span>)]}'],
+      ["a1", '<span class="k">def</span> <span class="f">agent</span>(state: EtatTicket) -> dict:'],
+      ["a2", '    <span class="k">return</span> {<span class="s">"messages"</span>: [llm_outils.<span class="f">invoke</span>([SYSTEME] + state[<span class="s">"messages"</span>])]}'],
+    ]},
+    {h:"L'exécution", lines:[
+      ["x1", 'config = {<span class="s">"callbacks"</span>: [handler], <span class="s">"run_name"</span>: <span class="s">"helpdesk"</span>, <span class="s">"recursion_limit"</span>: ' + lim + '}'],
+      ["x2", '<span class="k">for</span> etape <span class="k">in</span> graphe.<span class="f">stream</span>({<span class="s">"ticket"</span>: TICKET}, config=config, stream_mode=<span class="s">"updates"</span>):'],
+      ["x3", '    <span class="k">for</span> noeud, maj <span class="k">in</span> etape.<span class="f">items</span>():   <span class="c"># une ligne affichée par nœud exécuté</span>'],
+    ]},
+  ];
+  return blocks;
+}
+
+/* ---------- la frise ---------- */
+function freshLadder(L){
+  const cells = [];
+  for (let n = 0; n <= L; n++) cells.push({n, lab:"", st:""});
+  cells.push({n:L + 1, lab:"stop", st:"limit"});
+  return cells;
+}
+const setCell = (s, n, lab, st) => { const c = s.cells.find(x => x.n === n); if (c){ c.lab = lab; c.st = st; } };
+const onCell = (s, n, lab) => { s.cells.forEach(c => { if (c.st === "on") c.st = "done"; }); setCell(s, n, lab, "on"); s.ss = n; };
+
+/* ---------- la partie C : un calcul fidèle au moteur ---------- */
+// Vérifié sur langgraph 1.2.12 : le nœud du super-step k s'exécute si k <= L ;
+// le contrôle « step > stop » a lieu AVANT de chercher les tâches suivantes.
+const nodeAt = k => k === 0 ? "START" : k === 1 ? "trier" : k % 2 === 0 ? "agent" : "tools";
+function runC(c){
+  const needed = c.beh === "repond" ? 4 : Infinity;      // trier, agent, tools, agent
+  const executed = Math.min(c.lim, needed);
+  const ok = needed + 1 <= c.lim;                         // le contrôle du super-step needed+1 doit passer
+  let llm = 0, outils = 0;
+  for (let k = 1; k <= executed; k++){ if (nodeAt(k) === "agent") llm++; else if (nodeAt(k) === "tools") outils++; }
+  return {needed, executed, ok, llm, outils};
+}
+function termLineFor(k, c){
+  const n = nodeAt(k);
+  if (n === "trier") return {x:"   ▶ trier  : logiciel · P3 · file N1"};
+  if (n === "tools") return {x:"   ▶ tools  : hors ligne"};
+  if (c.beh === "repond" && k === 4) return {x:"   ▶ agent  : répond « " + M_A2.txt + " »"};
+  return {x:"   ▶ agent  : demande statut_serveur({'nom': 'srv-erp-02'})"};
+}
+const HEAD = () => [
+  {c:"sys", x:"(le graphe dessiné en ASCII par draw_ascii)"},
+  {x:"🗺️  Schéma Mermaid : construction/sortie/etape_03_graphe.md"},
+  {x:""},
+  {x:"🎫 " + TICKET},
+];
+
+/* ---------- les étapes ---------- */
+const PH = {p0:"Le plan", p1:"Exécution", pz:"Reducers", p2:"La limite", pb:"Bilan"};
+const PHASE = ["p0","p1","p1","p1","p1","p1","p1","p1","p1","p1","p1","pz","pz","pz","p2","p2","p2","pb"];
+
+function initial(){
+  return {
+    scene:"A", ss:null, limLabel:"limite 10", cells: freshLadder(10),
+    ladCap:'recursion_limit = <b>10</b> · super-steps autorisés : 0 à 10', ladCap2:"",
+    active:null, doneN:[], trail:[],
+    started:false, st:{ticket:null, categorie:null, priorite:null, file:null}, msgs:null,
+    term:[], termState:"idle", termWho:'Terminal · <small>uv run --project infrastructure python construction/etape_03_stategraph.py</small>',
+    limEdited:false,
+  };
+}
+function resetTransient(s){
+  s.edge = null; s.code = []; s.codeCls = "hl"; s.skip = []; s.note = null; s.choices = [];
+  s.upd = null; s.chg = {}; s.lost = []; s.read = []; s.route = null; s.newMsgs = 0;
+  s.inv = false; s.errNode = null; s.dimGraph = false; s.par = [];
+}
+const step = (s, node, edge) => {
+  if (s.active && !s.doneN.includes(s.active)) s.doneN.push(s.active);
+  s.active = node; s.edge = edge || null;
+  if (edge && !s.trail.includes(edge)) s.trail.push(edge);
+};
+function mergeMsgs(s, c, nouveaux){
+  if (c.red === "add"){ s.msgs = (s.msgs || []).concat(nouveaux); s.newMsgs = nouveaux.length; s.chg.messages = ["add", "ajouté par add_messages"]; }
+  else { s.lost = (s.msgs || []).slice(); s.msgs = nouveaux.slice(); s.newMsgs = nouveaux.length;
+         s.chg.messages = s.lost.length ? ["lost", "écrasée"] : ["rep", "valeur remplacée"]; }
+}
+const msgsHTML = list => "[" + list.map(m => esc(m.ty)).join(", ") + "]";
+
+const STEPS = [
+  /* 0 */ (s, c) => {
+    s.choices = ["gRed"]; s.code = ["s1","s0","s2","s3","s4","s5"];
+    s.title = "Le plan : un état et ses reducers";
+    s.text = "Le graphe de l'étape 3 partage un état, <code>EtatTicket</code>. Chaque clé a une règle de fusion, son <b>reducer</b>. " +
+      (c.red === "add"
+        ? "<code>messages</code> vient de <code>MessagesState</code>, avec le reducer <code>add_messages</code>. Les autres clés n'en ont pas : leur valeur sera remplacée."
+        : "Vous avez retiré le reducer : <code>messages</code> est une simple liste, comme les autres clés sans reducer. Suivez ce qui arrive à l'historique.") +
+      " Le choix ci-dessous reste modifiable jusqu'à l'étape 10.";
+  },
+  /* 1 */ (s, c) => {
+    s.started = true; s.st.ticket = '"' + TICKET + '"'; s.msgs = c.red === "add" ? [] : null;
+    s.chg.ticket = ["rep", "entrée"]; if (c.red === "add") s.chg.messages = ["same", "liste vide"];
+    s.term.push({c:"cmd", x:'$ uv run --project infrastructure python construction/etape_03_stategraph.py "' + TICKET + '"'});
+    HEAD().forEach(l => s.term.push(l));
+    s.termState = "run"; s.inv = true;
+    step(s, "START", "e_st"); onCell(s, 0, "START");
+    s.code = ["x1","x2"]; s.choices = ["gRed"];
+    s.title = "stream() : l'entrée devient l'état";
+    s.text = "Le script appelle <code>graphe.stream({\"ticket\": TICKET}, config)</code> avec <code>recursion_limit</code> à 10. LangGraph écrit l'entrée dans l'état : seule la clé <code>ticket</code> a une valeur. " +
+      (c.red === "add" ? "<code>messages</code> vaut déjà <code>[]</code> : une clé avec ce reducer part d'une liste vide. " : "<code>messages</code> est absente, comme les autres clés. ") +
+      "C'est le <b>super-step 0</b> : le nœud START transmet l'entrée.";
+  },
+  /* 2 */ (s, c) => {
+    step(s, "trier", "e_st"); onCell(s, 1, "trier"); s.inv = true; s.choices = ["gRed"];
+    s.read = ["ticket"]; s.code = ["t1","t2","t3","t4"];
+    s.title = "Super-step 1 : trier reçoit tout l'état";
+    s.text = "L'arête fixe <code>START → trier</code> désigne le nœud suivant. trier reçoit <b>l'état complet</b> dans <code>state</code> et lit <code>state[\"ticket\"]</code>. La chaîne de tri appelle le LLM, qui répond par exemple « logiciel ». Les règles Python donnent ensuite P3 (aucun mot d'urgence) et la file N1.";
+  },
+  /* 3 */ (s, c) => {
+    s.active = "trier"; s.inv = true; s.choices = ["gRed"];
+    s.upd = {from:"trier", body:'{"categorie": "logiciel",\n "priorite": "P3",\n "file": "N1",\n "messages": [HumanMessage("[logiciel · P3] srv-erp-02 est-il en ligne ?")]}'};
+    s.code = ["t5","t6"];
+    s.title = "trier renvoie une mise à jour partielle";
+    s.text = "trier renvoie seulement les quatre clés qu'il produit. Il ne recopie pas <code>ticket</code> et ne modifie pas <code>state</code> sur place. Ce petit dict est une <b>mise à jour</b>. LangGraph l'applique à la fin du super-step, une fois le nœud terminé.";
+  },
+  /* 4 */ (s, c) => {
+    s.active = "trier"; s.choices = ["gRed"];
+    s.st.categorie = '"logiciel"'; s.st.priorite = '"P3"'; s.st.file = '"N1"';
+    s.chg.categorie = s.chg.priorite = s.chg.file = ["rep", "valeur remplacée"]; s.chg.ticket = ["same", "inchangée"];
+    mergeMsgs(s, c, [M_H]);
+    s.upd = {from:"trier", body:'{"categorie": "logiciel", "priorite": "P3", "file": "N1",\n "messages": [HumanMessage(…)]}'};
+    s.term.push({x:"   ▶ trier  : logiciel · P3 · file N1"}); s.inv = true;
+    s.code = c.red === "add" ? ["s1","s0","s3","s4","s5"] : ["s0","s3","s4","s5"];
+    s.title = "La fusion, clé par clé";
+    s.text = "Pour chaque clé de la mise à jour, LangGraph applique le reducer. <code>categorie</code>, <code>priorite</code> et <code>file</code> n'en ont pas : la nouvelle valeur remplace l'ancienne. " +
+      (c.red === "add"
+        ? "<code>messages</code> passe par <code>add_messages</code> : le message s'ajoute à la liste vide. "
+        : "<code>messages</code> n'a plus de reducer : la liste renvoyée devient la valeur. Pour l'instant, le résultat est le même. ") +
+      "<code>ticket</code> n'est pas dans la mise à jour, il ne bouge pas.";
+  },
+  /* 5 */ (s, c) => {
+    step(s, "agent", "e_ta"); onCell(s, 2, "agent"); s.inv = true; s.choices = ["gRed"];
+    s.read = ["messages"];
+    s.upd = {from:"agent", body:"{\"messages\": [AIMessage(content=\"\",\n   tool_calls=[statut_serveur({'nom': 'srv-erp-02'})])]}"};
+    s.code = ["w6","a1","a2"];
+    s.note = {cls:"", h:"L'agent reçoit tout l'état, <code>categorie</code> comprise. Il n'envoie au modèle que <code>[SYSTEME] + state[\"messages\"]</code>, soit ici " + (s.msgs ? s.msgs.length : 0) + " message" + ((s.msgs && s.msgs.length > 1) ? "s" : "") + " après le prompt système."};
+    s.title = "Super-step 2 : l'agent demande un outil";
+    s.text = "L'arête fixe <code>trier → agent</code> mène à l'agent. Le modèle ne répond pas encore : il demande <code>statut_serveur</code> pour <code>srv-erp-02</code>. L'agent renvoie ce seul message, dans une liste. Comme trier, il ne renvoie pas l'historique complet.";
+  },
+  /* 6 */ (s, c) => {
+    s.active = "agent"; s.choices = ["gRed"];
+    mergeMsgs(s, c, [M_A1]);
+    s.term.push({x:"   ▶ agent  : demande statut_serveur({'nom': 'srv-erp-02'})"}); s.inv = true;
+    s.code = ["s1","s0"]; s.codeCls = c.red === "add" ? "hl" : "hle";
+    s.title = c.red === "add" ? "Les messages s'ajoutent" : "Les messages sont écrasés";
+    s.text = c.red === "add"
+      ? "<code>add_messages</code> ajoute la réponse à la suite : l'historique compte deux messages. La question de l'utilisateur est toujours là. <b>Basculez le reducer ci-dessus</b> pour voir l'autre cas."
+      : "Sans reducer, la liste renvoyée par l'agent <b>remplace</b> l'historique. La question a disparu, il ne reste que la demande d'outil. LangGraph ne lève aucune erreur : la perte est silencieuse.";
+  },
+  /* 7 */ (s, c) => {
+    s.active = "agent"; s.choices = ["gRed"]; s.edge = "e_at";
+    s.route = {res:'"tools"', why:"le dernier message contient un appel d'outil"};
+    s.read = ["messages"]; s.code = ["w7"];
+    s.note = {cls:"", h:"Dans <code>langgraph/prebuilt/tool_node.py</code> : <code>if hasattr(ai_message, \"tool_calls\") and len(ai_message.tool_calls) &gt; 0: return \"tools\"</code>, sinon <code>return \"__end__\"</code>."};
+    s.title = "L'arête conditionnelle lit l'état";
+    s.text = "Après l'agent, pas d'arête fixe. <code>add_conditional_edges(\"agent\", tools_condition)</code> appelle une <b>fonction de routage</b> sur l'état. <code>tools_condition</code> regarde le dernier message de <code>messages</code>. Il contient un appel d'outil : elle renvoie <code>\"tools\"</code>.";
+  },
+  /* 8 */ (s, c) => {
+    step(s, "tools", "e_at"); onCell(s, 3, "tools"); s.choices = ["gRed"];
+    s.upd = {from:"tools", body:'{"messages": [ToolMessage("hors ligne", name="statut_serveur")]}'};
+    mergeMsgs(s, c, [M_T]);
+    s.term.push({x:"   ▶ tools  : hors ligne"}); s.inv = true;
+    s.code = ["w4"];
+    s.title = "Super-step 3 : ToolNode exécute l'outil";
+    s.text = "<code>ToolNode(OUTILS)</code> lit les appels d'outil du dernier message et exécute <code>statut_serveur(\"srv-erp-02\")</code>. L'inventaire de NordTech SA répond « hors ligne ». ToolNode renvoie lui aussi une mise à jour : <code>{\"messages\": [ToolMessage(…)]}</code>. " +
+      (c.red === "add" ? "Avec <code>add_messages</code>, l'historique compte trois messages." : "Sans reducer, ce résultat remplace tout : la demande d'outil disparaît à son tour.");
+  },
+  /* 9 */ (s, c) => {
+    step(s, "agent", "e_tt"); onCell(s, 4, "agent"); s.choices = ["gRed"];
+    s.read = ["messages"];
+    s.note = c.red === "add"
+      ? {cls:"", h:"Le modèle reçoit <code>[SYSTEME, HumanMessage, AIMessage(tool_calls), ToolMessage]</code> : la question, sa demande, le résultat."}
+      : {cls:"e", h:"Le modèle reçoit <code>[SYSTEME, ToolMessage(\"hors ligne\")]</code>. Ni la question ni la demande d'outil."};
+    mergeMsgs(s, c, [c.red === "add" ? M_A2 : M_A2x]);
+    s.upd = {from:"agent", body: c.red === "add" ? '{"messages": [AIMessage("' + M_A2.txt + '")]}' : '{"messages": [AIMessage(…)]}'};
+    if (c.red === "add") s.term.push({x:"   ▶ agent  : répond « " + M_A2.txt + " »"});
+    else { s.term.push({x:"   ▶ agent  : répond « … »"}); s.term.push({c:"sys", x:"   (réponse imprévisible : la question n'est plus dans l'historique)"}); }
+    s.inv = true; s.code = ["w8","a2"];
+    s.title = "Super-step 4 : l'agent relit l'historique";
+    s.text = c.red === "add"
+      ? "L'arête fixe <code>tools → agent</code> ferme la boucle. L'agent renvoie au modèle tout l'historique. Le modèle a ce qu'il faut et répond sans outil, par exemple « srv-erp-02 est hors ligne… ». La formulation dépend du modèle. La réponse s'ajoute : quatre messages."
+      : "L'arête fixe <code>tools → agent</code> ferme la boucle. Le modèle ne voit plus qu'un résultat d'outil sorti de son contexte. Sa réponse dépend du modèle, et certains fournisseurs refusent un résultat d'outil sans la demande qui le précède. On suppose ici qu'il répond sans outil.";
+  },
+  /* 10 */ (s, c) => {
+    s.active = "agent"; s.edge = "e_ae"; s.choices = ["gRed"];
+    s.route = {res:'"__end__"', why:"le dernier message n'a pas d'appel d'outil : direction END"};
+    step(s, "END", "e_ae"); s.doneN.push("END"); s.active = null;
+    s.cells.forEach(x => { if (x.st === "on") x.st = "done"; }); setCell(s, 5, "fin", "ok"); s.ss = 5;
+    s.term.push({x:"🔭 Langfuse › Tracing › helpdesk (enfants : trier, agent, tools)"});
+    s.termState = "dead"; s.code = ["w7","x2"];
+    s.title = "tools_condition renvoie END";
+    s.text = "Le dernier message n'a pas d'appel d'outil : <code>tools_condition</code> renvoie <code>\"__end__\"</code>. Avant un super-step 5, LangGraph vérifie le compteur : 5 ne dépasse pas 10. Plus aucun nœud n'est à lancer, le graphe s'arrête. " +
+      (c.red === "add" ? "L'état final garde le ticket, le tri et les quatre messages." : "L'état final ne garde qu'un message, la dernière réponse. Remettez <code>add_messages</code> pour comparer.");
+  },
+  /* 11 */ (s, c) => {
+    s.scene = "B1"; s.dimGraph = true; s.active = null; s.ss = null; s.limLabel = "";
+    s.cells = []; s.ladCap = "Exemple hors graphe : on appelle <code>add_messages</code> directement"; s.ladCap2 = "";
+    s.term = [{c:"sys", x:"In [ ] : la cellule add_messages de la section 4"},
+              {x:"['Mon VPN est coupé', 'Je vérifie srv-vpn-01…', 'srv-vpn-01 est en ligne.']"},
+              {x:"['Mon VPN est coupé', 'Je vérifie le VPN.']"}];
+    s.termState = "dead"; s.termWho = "Notebook <small>J1_03_stategraph.ipynb · section 4</small>";
+    s.code = ["h1","h4","h5"];
+    s.title = "add_messages : même id, remplacement";
+    s.text = "<code>add_messages</code> fait plus qu'ajouter. Il donne un <code>id</code> à chaque message qui n'en a pas. Si un message de la mise à jour porte l'id d'un message existant, il le <b>remplace</b>, à la même place. Dans cet exemple de J1-03, <code>m2</code> est corrigé et la liste garde deux messages.";
+  },
+  /* 12 */ (s, c) => {
+    s.scene = "B2"; s.mini = true; s.choices = ["gJr"];
+    s.cells = [{n:0, lab:"START", st:"done"}, {n:1, lab:"a + b", st:"par on"}];
+    s.ss = 1; s.limLabel = "limite 10 007";
+    s.ladCap = "recursion_limit non fixé : <b>10 007</b> par défaut"; s.ladCap2 = "un super-step, deux nœuds";
+    s.par = ["a","b"]; s.mtrail = ["m_sa","m_sb"];
+    s.term = [{c:"sys", x:"In [ ] : parallele(" + (c.jr === "add" ? "AvecReducer" : "SansReducer") + ").invoke({\"journal\": []})"}];
+    s.termState = "run"; s.inv = true; s.termWho = "Notebook <small>J1_03_stategraph.ipynb · section 4</small>";
+    s.code = ["p5","p6","p7","p8","p9","p10"]; s.codeCls = "hlp";
+    s.title = "Un super-step peut lancer plusieurs nœuds";
+    s.text = "Dans ce graphe de J1-03, START a deux arêtes fixes, vers a et vers b. Les deux nœuds s'exécutent dans le <b>même super-step</b>, le 1. Chacun reçoit le même état et renvoie sa mise à jour pour la clé <code>journal</code>. LangGraph attend la fin des deux avant de fusionner.";
+  },
+  /* 13 */ (s, c) => {
+    s.scene = "B2"; s.mini = true; s.choices = ["gJr"];
+    s.mtrail = ["m_sa","m_sb"];
+    s.inv = false; s.termWho = "Notebook <small>J1_03_stategraph.ipynb · section 4</small>";
+    s.term = [{c:"sys", x:"In [ ] : parallele(" + (c.jr === "add" ? "AvecReducer" : "SansReducer") + ").invoke({\"journal\": []})"}];
+    if (c.jr === "add"){
+      s.cells = [{n:0, lab:"START", st:"done"}, {n:1, lab:"a + b", st:"par"}, {n:2, lab:"fin", st:"ok"}]; s.ss = 2;
+      s.doneParallel = true; s.mtrail.push("m_ae","m_be");
+      s.term.push({c:"good", x:"Avec reducer : {'journal': ['A : ticket reçu', 'B : ticket classé']}"}); s.termState = "dead";
+      s.code = ["p3","p4"]; s.skip = ["p1","p2"];
+      s.title = "Deux valeurs pour une clé : operator.add concatène";
+      s.text = "<code>journal</code> est déclaré <code>Annotated[list[str], operator.add]</code>. LangGraph concatène les deux listes : <code>['A : ticket reçu', 'B : ticket classé']</code>. <b>Basculez sur « aucun »</b> ci-dessus pour voir l'autre cas.";
+    } else {
+      s.cells = [{n:0, lab:"START", st:"done"}, {n:1, lab:"a + b", st:"boom"}]; s.ss = 1;
+      s.term.push({c:"bad", x:"Sans reducer : InvalidUpdateError → At key 'journal': Can receive only one value per step. Use an Annotated key to handle multiple values."});
+      s.termState = "bad"; s.par = ["a","b"]; s.parErr = true;
+      s.code = ["p1","p2"]; s.skip = ["p3","p4"]; s.codeCls = "hle";
+      s.title = "Deux valeurs pour une clé : sans reducer, erreur";
+      s.text = "Sans reducer, une clé ne peut recevoir qu'une valeur par super-step. LangGraph refuse de choisir et lève <code>InvalidUpdateError</code>. En séquence (a puis b), la seconde valeur aurait simplement remplacé la première : le notebook affiche alors <code>['B : ticket classé']</code>.";
+    }
+  },
+  /* 14 */ (s, c) => {
+    s.scene = "C"; s.mini = false; s.dimGraph = false;
+    s.doneN = ["START","trier","agent","tools","END"]; s.trail = ["e_st","e_ta","e_at","e_tt","e_ae"]; s.active = null;
+    s.cells = freshLadder(10);
+    ["START","trier","agent","tools","agent"].forEach((l, n) => setCell(s, n, l, "done")); setCell(s, 5, "fin", "ok");
+    s.ss = 5; s.limLabel = "limite 10";
+    s.ladCap = 'recursion_limit = <b>10</b> · le parcours des étapes 1 à 10'; s.ladCap2 = "";
+    s.term = []; s.termState = "idle"; s.termWho = 'Terminal · <small>uv run --project infrastructure python construction/etape_03_stategraph.py</small>';
+    s.code = ["x1"];
+    s.note = {cls:"p", h:"Dans <code>langgraph/_internal/_config.py</code> : <code>DEFAULT_RECURSION_LIMIT = int(getenv(\"LANGGRAPH_DEFAULT_RECURSION_LIMIT\", \"10007\"))</code>. Les tutoriels annoncent encore 25."};
+    s.title = "Le compteur de super-steps";
+    s.text = "LangGraph numérote les super-steps : START est le 0, trier le 1, et ainsi de suite. <code>recursion_limit</code> borne ce numéro, pour un appel à <code>invoke</code> ou <code>stream</code>. Sans réglage, la limite vaut <b>10 007</b> dans la version installée. L'étape 3 la fixe à 10. Notre parcours a utilisé les super-steps 1 à 4.";
+  },
+  /* 15 */ (s, c) => {
+    s.scene = "C"; s.limEdited = true; s.choices = ["gLim","gBeh"];
+    const r = runC(c);
+    s.cells = freshLadder(c.lim); s.doneN = []; s.trail = []; s.active = null;
+    s.limLabel = "limite " + c.lim;
+    s.ladCap = `recursion_limit = <b>${c.lim}</b> · super-steps autorisés : 0 à ${c.lim}`;
+    s.ladCap2 = `${r.executed} nœud${r.executed > 1 ? "s" : ""} exécuté${r.executed > 1 ? "s" : ""} · ${r.llm} appel${r.llm > 1 ? "s" : ""} au LLM · ${r.outils} appel${r.outils > 1 ? "s" : ""} d'outil`;
+    setCell(s, 0, "START", "done");
+    s.term = [{c:"cmd", x:'$ uv run --project infrastructure python construction/etape_03_stategraph.py "' + TICKET + '"'}];
+    if (c.lim !== 10) s.term.push({c:"sys", x:"(recursion_limit remplacé par " + c.lim + " dans config)"});
+    HEAD().forEach(l => s.term.push(l));
+    const EDGE = {trier:"e_st", agent1:"e_ta", tools:"e_at", agent:"e_tt"};
+    step(s, "START", null);
+    for (let k = 1; k <= r.executed; k++){
+      const n = nodeAt(k);
+      step(s, n, n === "agent" ? (k === 2 ? EDGE.agent1 : EDGE.agent) : EDGE[n]);
+      setCell(s, k, n, k === r.executed ? "on" : "done");
+      s.term.push(termLineFor(k, c));
+    }
+    s.ss = r.executed; s.termState = "run"; s.inv = true;
+    s.code = ["x1"]; s.codeCls = "hlh";
+    const qui = c.beh === "repond"
+      ? "Le modèle répond après un appel d'outil : il faut 4 nœuds (trier, agent, tools, agent)."
+      : "Un petit modèle peut redemander l'outil à chaque tour. Le graphe alterne alors agent (super-steps pairs) et tools (impairs), sans jamais atteindre END.";
+    s.title = "Et si l'agent boucle ?";
+    s.text = qui + ` Avec une limite de ${c.lim}, le super-step ${c.lim} est le dernier autorisé. <b>Changez la limite et le comportement ci-dessus</b>, puis passez à l'étape suivante.`;
+  },
+  /* 16 */ (s, c) => {
+    s.scene = "C"; s.limEdited = true; s.choices = ["gLim","gBeh"];
+    const r = runC(c);
+    s.inv = false;
+    if (r.ok){
+      s.cells.forEach(x => { if (x.st === "on") x.st = "done"; });
+      setCell(s, r.needed + 1, "fin", "ok"); s.ss = r.needed + 1;
+      step(s, "END", "e_ae"); s.doneN.push("END"); s.active = null;
+      s.term.push({x:"🔭 Langfuse › Tracing › helpdesk (enfants : trier, agent, tools)"}); s.termState = "dead";
+      s.code = ["x1","x2"]; s.codeCls = "hl";
+      s.title = "Verdict : le graphe atteint END";
+      s.text = `Le dernier message n'a pas d'appel d'outil. Avant le super-step 5, LangGraph vérifie le compteur : 5 ne dépasse pas ${c.lim}. Plus rien à lancer, le graphe se termine normalement. Essayez la limite 4 avec le même comportement.`;
+    } else {
+      const last = nodeAt(r.executed);
+      s.cells.forEach(x => { if (x.st === "on") x.st = "done"; });
+      setCell(s, r.executed + 1, "erreur", "boom"); s.ss = r.executed + 1; s.errNode = last;
+      s.term.push({c:"bad", x:"Traceback (most recent call last):"});
+      s.term.push({c:"bad", x:'  File "…/construction/etape_03_stategraph.py", line 154, in <module>'});
+      s.term.push({c:"bad", x:'    for etape in graphe.stream({"ticket": TICKET}, config=config, stream_mode="updates"):'});
+      s.term.push({c:"bad", x:"  …"});
+      s.term.push({c:"bad", x:ERRMSG(c.lim)});
+      s.term.push({c:"bad", x:ERRURL});
+      s.termState = "bad"; s.code = ["x1","x2"]; s.codeCls = "hle";
+      s.title = "Verdict : GraphRecursionError";
+      const finiQuandMeme = c.beh === "repond" && r.executed === r.needed;
+      s.text = `Au moment d'entrer dans le super-step ${c.lim + 1}, LangGraph compare le numéro à la limite : ${c.lim + 1} dépasse ${c.lim}. Il arrête tout et lève <code>GraphRecursionError</code>. ` +
+        (finiQuandMeme
+          ? "Pourtant l'agent avait déjà répondu au super-step 4. Le contrôle passe avant la recherche du nœud suivant : il faut une marche de plus que le nombre de nœuds exécutés. "
+          : "") +
+        "Le script de l'étape 3 ne l'attrape pas : le terminal affiche la trace Python. L'exercice Ex1.1 demande une réponse de repli polie.";
+      if (c.beh === "boucle") s.note = {cls:"e", h:`${r.llm} appel${r.llm > 1 ? "s" : ""} au LLM avant l'arrêt. Avec la limite par défaut de 10 007, l'agent aurait fait plus de 5 000 appels au LLM. OWASP ASI08 : une boucle non bornée est un incident de coût et de disponibilité.`};
+    }
+  },
+  /* 17 */ (s, c) => {
+    s.scene = "C";
+    s.title = "Bilan";
+    s.text = "Un nœud lit l'état complet et renvoie une mise à jour partielle. À la fin de chaque super-step, les reducers fusionnent ces mises à jour clé par clé. Les arêtes fixes et les fonctions de routage désignent les nœuds du super-step suivant. <code>recursion_limit</code> borne le nombre de super-steps : fixez-la et gérez <code>GraphRecursionError</code>.";
+  },
+];
+const N = STEPS.length - 1;
+
+/* ---------- état de lecture ---------- */
+const DEF = { red:"add", jr:"add", lim:10, beh:"boucle" };
+const ctx = Object.assign({}, DEF);
+let idx = 0, prevIdx = -1, playing = false, timer = null, prevModel = null;
+const seen = new Set([0]);
+
+function build(i){
+  const s = initial();
+  for (let k = 0; k <= i; k++){ resetTransient(s); s.mini = false; s.mtrail = []; s.doneParallel = false; s.parErr = false; STEPS[k](s, ctx); }
+  return s;
+}
+
+/* ---------- rendu ---------- */
+function renderLadder(s){
+  $("ladcap").innerHTML = s.ladCap;
+  $("ladcap2").textContent = s.ladCap2;
+  $("ladder").innerHTML = s.cells.length
+    ? s.cells.map(c => `<div class="cell ${c.st}" title="super-step ${c.n}"><b>${c.n}</b><span>${esc(c.lab || (c.st === "" ? "libre" : ""))}</span></div>`).join("")
+    : `<div class="empty">Pas de super-step ici.</div>`;
+  $("ssno").textContent = s.ss == null ? "–" : s.ss;
+  $("limno").textContent = s.limLabel;
+}
+
+function renderGraph(s){
+  const g = $("graph");
+  g.classList.toggle("mini", !!s.mini);
+  g.classList.toggle("dim", !!s.dimGraph);
+  ["START","trier","agent","tools","END"].forEach(n => {
+    const el = $("n-" + n); el.classList.remove("on","done","err","par");
+    if (s.errNode === n) el.classList.add("err");
+    else if (s.active === n) el.classList.add("on");
+    else if (s.doneN.includes(n)) el.classList.add("done");
+  });
+  ["e_st","e_ta","e_at","e_tt","e_ae"].forEach(e => {
+    const p = $(e); p.classList.remove("on","trail");
+    if (s.edge === e) p.classList.add("on"); else if (s.trail.includes(e)) p.classList.add("trail");
+  });
+  ["mSTART","a","b","mEND"].forEach(n => {
+    const el = $("n-" + n); el.classList.remove("on","done","err","par");
+    if (n === "mSTART" && s.mini) el.classList.add("done");
+    if (s.par.includes(n)) el.classList.add(s.parErr ? "err" : "par");
+    else if (s.doneParallel && (n === "a" || n === "b" || n === "mEND")) el.classList.add("done");
+  });
+  ["m_sa","m_sb","m_ae","m_be"].forEach(e => { const p = $(e); p.classList.remove("on","trail"); if ((s.mtrail || []).includes(e)) p.classList.add("trail"); });
+  $("graphph").textContent = s.mini ? "Le graphe « parallele » de J1-03 : START → a et START → b."
+    : s.dimGraph ? "Ici, on appelle add_messages directement, sans graphe."
+    : "Le nœud en cours, le chemin déjà parcouru.";
+  $("route").innerHTML = s.route ? `<div class="routebox">tools_condition(state) → ${esc(s.route.res)}<span>${esc(s.route.why)}</span></div>` : "";
+}
+
+function msgList(list, opts){
+  opts = opts || {};
+  if (!list.length && !(opts.lost && opts.lost.length)) return "<span class=\"absent\">[] (liste vide)</span>";
+  let h = "<ul class=\"msgs\">";
+  (opts.lost || []).forEach(m => { h += `<li class="${m.t} gone"><i>${esc(m.ty)}</i> · ${esc(m.txt)}</li>`; });
+  list.forEach((m, i) => {
+    const isNew = opts.newFrom != null && i >= opts.newFrom;
+    h += `<li class="${m.t}${isNew ? " newm" : ""}${isNew && opts.fresh ? " fresh" : ""}"><i>${m.id ? esc(m.id) + " · " : ""}${esc(m.ty)}</i> · ${esc(m.txt)}</li>`;
+  });
+  return h + "</ul>";
+}
+
+function renderState(s, forward){
+  let h = "";
+  if (s.scene === "A"){
+    $("stateph").textContent = "Les clés de EtatTicket, leur reducer, leur valeur après fusion.";
+    if (s.upd) h += `<div class="upd"><h3>Mise à jour renvoyée par <b>${esc(s.upd.from)}</b></h3><pre>${esc(s.upd.body)}</pre></div>`;
+    if (!s.started) h += `<p class="empty">L'état n'existe pas encore. Il naît à l'appel de stream().</p>`;
+    const redOf = k => k === "messages" && ctx.red === "add" ? ["has","add_messages"] : ["","aucun reducer"];
+    h += `<div class="rows">`;
+    ["ticket","messages","categorie","priorite","file"].forEach(k => {
+      const chg = s.chg[k], read = s.read.includes(k);
+      const cls = chg ? chg[0] : read ? "read" : "";
+      const tag = chg ? chg[1] : read ? "lu par le nœud" : "";
+      let val;
+      if (k === "messages"){
+        if (s.msgs == null && !s.lost.length) val = `<span class="absent">${s.started ? "(absente)" : "—"}</span>`;
+        else val = msgList(s.msgs || [], {lost: s.lost, newFrom: s.newMsgs ? (s.msgs.length - s.newMsgs) : null, fresh: forward});
+      } else {
+        val = s.st[k] == null ? `<span class="absent">${s.started ? "(absente)" : "—"}</span>` : esc(s.st[k]);
+      }
+      const [rc, rl] = redOf(k);
+      h += `<div class="row ${cls}"><code class="key">${k}</code><span class="red ${rc}">${rl}</span><div class="val">${val}</div>${tag ? `<span class="tag">${esc(tag)}</span>` : ""}</div>`;
+    });
+    h += `</div>`;
+  } else if (s.scene === "B1"){
+    $("stateph").textContent = "add_messages(historique, mise à jour), clé messages.";
+    const HIST = [{t:"h", ty:"HumanMessage", txt:"Mon VPN est coupé", id:"m1"}, {t:"a", ty:"AIMessage", txt:"Je vérifie srv-vpn-01…", id:"m2"}];
+    h += `<div class="cols3">`;
+    h += `<div class="box"><div class="grp-h">Historique</div>${msgList(HIST)}</div>`;
+    h += `<div class="upd"><h3>Mise à jour</h3>${msgList([{t:"a", ty:"AIMessage", txt:"Je vérifie le VPN.", id:"m2"}])}</div>`;
+    h += `<div class="box res"><div class="grp-h">Résultat : même id, remplacé à sa place</div>${msgList([HIST[0], {t:"a", ty:"AIMessage", txt:"Je vérifie le VPN.", id:"m2"}], {newFrom:1, fresh:forward})}</div>`;
+    h += `<p class="empty">Un message sans id en reçoit un (un uuid) : il s'ajoute toujours.</p>`;
+    h += `</div>`;
+  } else if (s.scene === "B2"){
+    $("stateph").textContent = "La clé journal, avant et après le super-step 1.";
+    const red = ctx.jr === "add";
+    h += `<div class="rows"><div class="row"><code class="key">journal</code><span class="red ${red ? "has" : ""}">${red ? "operator.add" : "aucun reducer"}</span><div class="val">[]</div><span class="tag" style="background:var(--surface);color:var(--muted);border:1px solid var(--line)">entrée</span></div></div>`;
+    h += `<div class="upd par" style="margin-top:10px"><h3>Mise à jour de <b>a</b></h3><pre>{"journal": ["A : ticket reçu"]}</pre></div>`;
+    h += `<div class="upd par"><h3>Mise à jour de <b>b</b></h3><pre>{"journal": ["B : ticket classé"]}</pre></div>`;
+    if (idx === 13){
+      h += red
+        ? `<div class="box res${forward ? " fresh" : ""}"><div class="grp-h">Après fusion</div>journal = [] + ["A : ticket reçu"] + ["B : ticket classé"]<br>= ['A : ticket reçu', 'B : ticket classé']</div>`
+        : `<div class="box bad${forward ? " fresh" : ""}"><div class="grp-h">Fusion impossible</div><b>InvalidUpdateError</b> : deux valeurs pour journal dans le même super-step, aucune règle pour choisir.</div>`;
+    } else h += `<p class="empty">La fusion attend la fin des deux nœuds.</p>`;
+  } else {
+    $("stateph").textContent = "Le budget de super-steps de cet appel.";
+    const r = runC(ctx);
+    const L = idx >= 15 ? ctx.lim : 10;
+    const ok = idx >= 15 ? r.ok : true;
+    const exe = idx >= 15 ? r.executed : 4;
+    h += `<dl class="kv">`;
+    h += `<dt>recursion_limit</dt><dd>${L}</dd>`;
+    h += `<dt>défaut installé</dt><dd>10 007</dd>`;
+    h += `<dt>nœuds exécutés</dt><dd>${exe} (super-steps 1 à ${exe})</dd>`;
+    if (idx >= 15){
+      h += `<dt>appels au LLM</dt><dd>${r.llm}</dd><dt>appels d'outil</dt><dd>${r.outils}</dd>`;
+    }
+    if (idx !== 15) h += `<dt>contrôle</dt><dd class="${ok ? "good" : "bad"}">${ok ? `super-step ${exe + 1} ≤ ${L} : on continue, rien à lancer → fin` : `super-step ${exe + 1} > ${L} : GraphRecursionError`}</dd>`;
+    h += `</dl>`;
+    h += `<p class="empty" style="margin-top:10px">Règle vérifiée sur langgraph 1.2.12 : le nœud du super-step k s'exécute si k ≤ L. Un graphe de N nœuds en série a besoin de L ≥ N+1.</p>`;
+  }
+  $("state").innerHTML = h;
+}
+
+function renderCode(s){
+  const blocks = codeFor(s, ctx);
+  $("code").innerHTML = blocks.map(b => `<div class="code-h"><span>${esc(b.h)}</span></div><pre class="code">${b.lines.map(([id, html]) => {
+    let cls = "ln";
+    if (s.code.includes(id)) cls += " " + s.codeCls; else if (s.skip.includes(id)) cls += " skip";
+    return `<span class="${cls}">${html}</span>`;
+  }).join("")}</pre>`).join("");
+  $("note").innerHTML = s.note ? `<div class="note ${s.note.cls}">${s.note.h}</div>` : "";
+}
+
+function renderTerm(s, freshFrom){
+  $("term").classList.toggle("idle", s.termState === "idle");
+  $("termwho").innerHTML = s.termWho;
+  const pill = $("pill");
+  pill.className = "pill" + (s.termState === "run" ? " run" : s.termState === "dead" ? " dead" : s.termState === "bad" ? " bad" : "");
+  pill.textContent = s.termState === "run" ? "en cours" : s.termState === "dead" ? "terminé" : s.termState === "bad" ? "erreur" : "pas lancé";
+  let h = s.term.map((l, i) => `<div class="${l.c || ""}${i >= freshFrom ? " fresh" : ""}">${esc(l.x) || "&nbsp;"}</div>`).join("");
+  if (s.inv) h += `<div class="spin">   le graphe tourne</div>`;
+  if (!s.term.length) h = `<div class="sys">Rien n'est lancé.</div>`;
+  $("tb").innerHTML = h;
+}
+
+function render(){
+  const s = build(idx);
+  const forward = idx === prevIdx + 1;
+  const pm = forward ? prevModel : null;
+
+  $("stepno").textContent = `Étape ${idx} / ${N}`;
+  const chip = $("phasechip"); chip.className = "phase-chip " + (PHASE[idx] === "pb" ? "p0" : PHASE[idx]); chip.textContent = PH[PHASE[idx]];
+  $("captitle").textContent = s.title;
+  $("captext").innerHTML = s.text;
+
+  $("choices").hidden = !s.choices.length;
+  ["gRed","gJr","gLim","gBeh"].forEach(g => { $(g).hidden = !s.choices.includes(g); });
+  $("rAdd").setAttribute("aria-pressed", ctx.red === "add"); $("rNone").setAttribute("aria-pressed", ctx.red === "none");
+  $("jAdd").setAttribute("aria-pressed", ctx.jr === "add");  $("jNone").setAttribute("aria-pressed", ctx.jr === "none");
+  $("bRep").setAttribute("aria-pressed", ctx.beh === "repond"); $("bLoop").setAttribute("aria-pressed", ctx.beh === "boucle");
+  $("limBtns").querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", +b.dataset.l === ctx.lim));
+
+  renderLadder(s);
+  renderGraph(s);
+  renderState(s, forward);
+  renderCode(s);
+  renderTerm(s, pm && pm.scene === s.scene && pm.term.length <= s.term.length ? pm.term.length : 1e9);
+
+  $("bPrev").disabled = idx === 0;
+  $("bNext").disabled = idx === N;
+  $("bPlay").disabled = idx === N;
+  seen.add(idx);
+  $("dots").querySelectorAll(".dot").forEach((d, i) => {
+    d.classList.toggle("cur", i === idx);
+    d.classList.toggle("seen", seen.has(i));
+  });
+  if (idx === N && playing) stop();
+  prevModel = s; prevIdx = idx;
+}
+
+/* ---------- commandes ---------- */
+const DUR = i => ({0:6500, 6:8000, 9:8000, 13:8000, 14:8000, 15:9000, 16:9000}[i] || 6500);
+function go(i){ idx = Math.max(0, Math.min(N, i)); render(); if (playing) schedule(); }
+function schedule(){ clearTimeout(timer); timer = setTimeout(() => { if (idx < N) { idx++; render(); if (playing) schedule(); } }, DUR(idx)); }
+function play(){ if (idx === N) return; playing = true; $("bPlay").textContent = "❚❚ Pause"; schedule(); }
+function stop(){ playing = false; clearTimeout(timer); $("bPlay").textContent = "▶ Lecture"; }
+
+$("limBtns").innerHTML = LIMITS.map(l => `<button type="button" class="mono" data-l="${l}" aria-pressed="false">${l}</button>`).join("");
+$("dots").innerHTML = PHASE.map((p, i) => `<button class="dot ${p === "pb" ? "p0" : p}" aria-label="Aller à l'étape ${i}" data-i="${i}"></button>`).join("");
+$("dots").addEventListener("click", e => { const b = e.target.closest(".dot"); if (b){ stop(); prevIdx = -2; go(+b.dataset.i); } });
+$("bNext").onclick = () => { stop(); go(idx + 1); };
+$("bPrev").onclick = () => { stop(); prevIdx = -2; go(idx - 1); };
+$("bPlay").onclick = () => playing ? stop() : play();
+$("bReset").onclick = () => { stop(); Object.assign(ctx, DEF); seen.clear(); prevIdx = -2; go(0); };
+const rerender = () => { prevIdx = -2; render(); };
+$("rAdd").onclick  = () => { ctx.red = "add"; rerender(); };
+$("rNone").onclick = () => { ctx.red = "none"; rerender(); };
+$("jAdd").onclick  = () => { ctx.jr = "add"; rerender(); };
+$("jNone").onclick = () => { ctx.jr = "none"; rerender(); };
+$("bRep").onclick  = () => { ctx.beh = "repond"; rerender(); };
+$("bLoop").onclick = () => { ctx.beh = "boucle"; rerender(); };
+$("limBtns").addEventListener("click", e => { const b = e.target.closest("button"); if (b){ ctx.lim = +b.dataset.l; rerender(); } });
+document.addEventListener("keydown", e => {
+  if (e.target.matches("input,textarea")) return;
+  if (e.key === "ArrowRight" && idx < N){ e.preventDefault(); stop(); go(idx + 1); }
+  else if (e.key === "ArrowLeft" && idx > 0){ e.preventDefault(); stop(); prevIdx = -2; go(idx - 1); }
+  else if (e.key === " " && !e.target.matches("button")){ e.preventDefault(); playing ? stop() : play(); }
+});
+
+render();
+})();
+</script>
+</body></html>

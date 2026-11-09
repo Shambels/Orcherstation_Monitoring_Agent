@@ -1,0 +1,958 @@
+<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Retry, timeout et repli</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+[hidden]{display:none !important}
+/* Layout : un lecteur pas à pas. En haut la frise temporelle du nœud tools, puis la narration et les réglages,
+   puis trois vues synchronisées (graphe, politique et état, code) et le journal. */
+:root{
+  --bg:#eef1f6; --surface:#ffffff; --surface-2:#e6eaf1; --line:#d2d9e4; --line-strong:#9aa6b8;
+  --fg:#121924; --muted:#576377;
+  --run:#2353cc; --run-soft:#dfe7fb; --on-run:#ffffff;
+  --pause:#a86400; --pause-soft:#fcefd8;
+  --disk:#0b7a68; --disk-soft:#dcf2ed;
+  --human:#b0236a; --human-soft:#f9e1ee;
+  --err:#c42b2b; --err-soft:#fbe3e3;
+  --term-bg:#0d1218; --term-fg:#d9e0ea; --term-muted:#7f8a9b; --term-line:#202a36;
+  --f-display:"IBM Plex Sans Condensed","Arial Narrow",system-ui,sans-serif;
+  --f-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,"Cascadia Mono",Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0c1016; --surface:#141a23; --surface-2:#1b2330; --line:#29323f; --line-strong:#56637a;
+  --fg:#e5eaf2; --muted:#94a1b5;
+  --run:#7aa2ff; --run-soft:#1c2a4a; --on-run:#0b1222;
+  --pause:#f0b03a; --pause-soft:#3a2b10;
+  --disk:#3fc8b0; --disk-soft:#0f2e2a;
+  --human:#f27bb4; --human-soft:#3a1529;
+  --err:#ff7676; --err-soft:#3a1515;
+  --term-bg:#06090d; --term-fg:#d9e0ea; --term-muted:#7f8a9b; --term-line:#1a222d;
+  color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --bg:#0c1016; --surface:#141a23; --surface-2:#1b2330; --line:#29323f; --line-strong:#56637a;
+  --fg:#e5eaf2; --muted:#94a1b5;
+  --run:#7aa2ff; --run-soft:#1c2a4a; --on-run:#0b1222;
+  --pause:#f0b03a; --pause-soft:#3a2b10;
+  --disk:#3fc8b0; --disk-soft:#0f2e2a;
+  --human:#f27bb4; --human-soft:#3a1529;
+  --err:#ff7676; --err-soft:#3a1515;
+  --term-bg:#06090d; --term-fg:#d9e0ea; --term-muted:#7f8a9b; --term-line:#1a222d;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:15px;line-height:1.5;overflow-x:hidden}
+.app{max-width:1440px;margin:0 auto;padding-block:20px 48px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
+  display:flex;flex-direction:column;gap:14px}
+code,.mono{font-family:var(--f-mono);font-size:.9em}
+p code,.cap-text code,.lesson code,.dec code{background:var(--surface-2);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+
+/* En-tête */
+.top{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;justify-content:space-between}
+.top h1{font-family:var(--f-display);font-weight:700;font-size:clamp(26px,3.2vw,38px);line-height:1.05;margin:0;text-wrap:balance;letter-spacing:-.01em}
+.top .sub{color:var(--muted);margin:6px 0 0;max-width:78ch}
+.clock{display:flex;align-items:baseline;gap:12px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px 16px;flex-wrap:wrap}
+.clock .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted)}
+.clock .t{font-family:var(--f-mono);font-size:30px;font-weight:600;font-variant-numeric:tabular-nums}
+.clock .gap{font-family:var(--f-mono);font-size:13px;color:var(--pause);min-width:12ch}
+
+/* Frise temporelle */
+.tl-panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 16px 10px;min-width:0}
+.tl-head{display:flex;flex-wrap:wrap;justify-content:space-between;gap:6px 16px;align-items:baseline}
+.tl-head h2{font-family:var(--f-display);font-size:15px;font-weight:600;margin:0;text-transform:uppercase;letter-spacing:.06em}
+.tl-head .ph{font-size:12.5px;color:var(--muted)}
+.tl-legend{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px;color:var(--muted)}
+.tl-legend i{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:-2px;margin-right:5px;border:1.5px solid}
+.lg-conn{background:var(--err);border-color:var(--err)}
+.lg-to{background:var(--run-soft);border-color:var(--run)}
+.lg-val{background:var(--human);border-color:var(--human)}
+.lg-ok{background:var(--disk);border-color:var(--disk)}
+.lg-wait{background:repeating-linear-gradient(135deg,var(--pause-soft) 0 4px,transparent 4px 7px);border-color:var(--pause)}
+.tl{overflow:hidden;padding:0 4px}
+.tl-in{position:relative;margin:0 18px 0 10px}
+.tl-row{position:relative;height:20px}
+.tl-track{position:relative;height:40px;background:var(--surface-2);border-radius:6px}
+.tl-ghost{position:relative;height:14px}
+.tl-axis{position:relative;height:22px;border-top:1px solid var(--line-strong);margin-top:2px}
+.tick{position:absolute;top:0;font-family:var(--f-mono);font-size:11px;color:var(--muted);transform:translateX(-50%);padding-top:3px;white-space:nowrap}
+.tick::before{content:"";position:absolute;top:-1px;left:50%;width:1px;height:5px;background:var(--line-strong)}
+.blk{position:absolute;top:5px;bottom:5px;border-radius:4px;font-size:11.5px;font-weight:600;display:flex;align-items:center;justify-content:center;overflow:hidden;white-space:nowrap;z-index:2}
+.blk.k-conn{background:var(--err)}
+.blk.k-value{background:var(--human)}
+.blk.k-ok{background:var(--disk)}
+.blk.k-timeout{background:var(--run-soft);border:1.5px solid var(--run);border-right:4px solid var(--err);color:var(--run)}
+.blk.wait{z-index:1;top:11px;bottom:11px;background:repeating-linear-gradient(135deg,var(--pause-soft) 0 6px,transparent 6px 11px);border:1.5px solid var(--pause)}
+.blk.cur{box-shadow:0 0 0 3px color-mix(in srgb,var(--fg) 30%,transparent)}
+.ghost{position:absolute;top:2px;height:10px;border:1.5px dashed var(--line-strong);border-left:none;border-radius:0 4px 4px 0}
+.ghost-lab{position:absolute;top:-1px;font-size:11px;color:var(--muted);white-space:nowrap;padding-left:6px}
+.lab{position:absolute;bottom:2px;font-family:var(--f-mono);font-size:11.5px;font-weight:600;white-space:nowrap}
+.lab.k-conn{color:var(--err)} .lab.k-value{color:var(--human)} .lab.k-ok{color:var(--disk)} .lab.k-timeout{color:var(--run)}
+.wlab{position:absolute;top:1px;font-family:var(--f-mono);font-size:11px;color:var(--pause);transform:translateX(-50%);white-space:nowrap}
+.wlab .short{display:none}
+.mlab{position:absolute;bottom:2px;font-size:11.5px;font-weight:600;white-space:nowrap;transform:translateX(-100%);padding-right:4px}
+.mlab.err{color:var(--err)} .mlab.ok{color:var(--disk)}
+.mark{position:absolute;top:-2px;bottom:-2px;width:3px;border-radius:2px;z-index:3}
+.mark.err{background:var(--err)} .mark.ok{background:var(--disk)}
+.now{position:absolute;top:-8px;bottom:-8px;width:3px;margin-left:-1.5px;background:var(--fg);border-radius:2px;z-index:4;transition:left .5s ease;pointer-events:none}
+.now::before{content:"";position:absolute;top:-5px;left:-5px;border:6.5px solid transparent;border-top-color:var(--fg)}
+.tl-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:12.5px;color:var(--muted);font-style:italic}
+
+/* Narration + commandes */
+.stage{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px;align-items:start;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 20px}
+.cap-step{font-size:12px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);display:flex;gap:10px;align-items:center}
+.phase-chip{font-weight:600;padding:2px 8px;border-radius:99px;letter-spacing:.05em}
+.phase-chip.p0{background:var(--surface-2);color:var(--muted)}
+.phase-chip.p1{background:var(--run-soft);color:var(--run)}
+.phase-chip.pz{background:var(--pause-soft);color:var(--pause)}
+.phase-chip.pe{background:var(--err-soft);color:var(--err)}
+.phase-chip.pd{background:var(--disk-soft);color:var(--disk)}
+.cap-title{font-family:var(--f-display);font-size:clamp(22px,2.4vw,28px);font-weight:700;margin:4px 0 6px;line-height:1.15;text-wrap:balance}
+.cap-text{font-size:16.5px;max-width:80ch;margin:0}
+.cap-text b{font-weight:600}
+.choices{display:flex;flex-wrap:wrap;gap:14px 22px;margin-top:12px;padding:12px 14px;border:1px dashed var(--human);border-radius:10px;background:var(--human-soft)}
+.choices .grp{display:flex;flex-direction:column;gap:6px;min-width:0}
+.choices .grp>span{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--human);font-weight:600}
+.seg-btns{display:flex;gap:6px;flex-wrap:wrap}
+.seg-btns button,.stepper button{font:inherit;font-size:14px;padding:6px 12px;border-radius:7px;border:1px solid var(--line-strong);background:var(--surface);color:var(--fg);cursor:pointer}
+.seg-btns button.mono{font-family:var(--f-mono);font-size:12.5px}
+.seg-btns button[aria-pressed="true"]{background:var(--human);border-color:var(--human);color:var(--surface)}
+.stepper{display:flex;gap:6px;align-items:center}
+.stepper output{font-family:var(--f-mono);font-size:16px;font-weight:600;min-width:2ch;text-align:center}
+.stepper button:disabled{opacity:.35;cursor:not-allowed}
+.controls{display:flex;flex-direction:column;gap:10px;align-items:flex-end}
+.btns{display:flex;gap:6px;flex-wrap:wrap}
+.btn{font:inherit;font-weight:600;font-size:14px;padding:9px 14px;border-radius:8px;border:1px solid var(--line-strong);background:var(--surface);color:var(--fg);cursor:pointer;white-space:nowrap}
+.btn.primary{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.btn:disabled{opacity:.35;cursor:not-allowed}
+.btn:focus-visible,.dot:focus-visible,.seg-btns button:focus-visible,.stepper button:focus-visible{outline:3px solid var(--run);outline-offset:2px}
+.dots{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;max-width:330px}
+.dot{width:17px;height:17px;border-radius:4px;border:1px solid var(--line-strong);background:var(--surface);cursor:pointer;padding:0}
+.dot.p1{border-color:var(--run)} .dot.pz{border-color:var(--pause)} .dot.pe{border-color:var(--err)} .dot.pd{border-color:var(--disk)}
+.dot.seen.p0{background:var(--surface-2)} .dot.seen.p1{background:var(--run-soft)} .dot.seen.pz{background:var(--pause-soft)} .dot.seen.pe{background:var(--err-soft)} .dot.seen.pd{background:var(--disk-soft)}
+.dot.cur{outline:2px solid var(--fg);outline-offset:1px}
+.hint{font-size:12px;color:var(--muted)}
+
+/* Trois vues */
+.views{display:grid;grid-template-columns:minmax(260px,.85fr) minmax(0,1.05fr) minmax(0,1.3fr);gap:14px;align-items:start}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px;min-width:0}
+.panel h2{font-family:var(--f-display);font-size:15px;font-weight:600;margin:0 0 2px;text-transform:uppercase;letter-spacing:.06em}
+.panel .ph{font-size:12.5px;color:var(--muted);margin:0 0 10px}
+
+/* Graphe */
+#graph{width:100%;max-width:380px;display:block;margin:0 auto}
+#graph text{font-family:var(--f-mono);font-size:13px;fill:var(--fg)}
+#graph .elab{font-size:10.5px;fill:var(--muted);font-family:var(--f-body)}
+#graph .small{font-size:10.5px}
+.edge{stroke:var(--line-strong);stroke-width:1.8;fill:none;marker-end:url(#arr)}
+.edge.alt{stroke-dasharray:4 4}
+.edge.trail{stroke:var(--run);opacity:.55;marker-end:url(#arrRun)}
+.edge.on{stroke:var(--run);stroke-width:3;opacity:1;stroke-dasharray:7 5;animation:flow .7s linear infinite;marker-end:url(#arrRun)}
+.edge.errpath.trail{stroke:var(--err);marker-end:url(#arrErr)}
+.edge.errpath.on{stroke:var(--err);marker-end:url(#arrErr)}
+@keyframes flow{to{stroke-dashoffset:-12}}
+.node rect,.node circle{fill:var(--surface);stroke:var(--line-strong);stroke-width:1.6;transition:fill .3s,stroke .3s}
+#n-handler rect{stroke-dasharray:5 4}
+.node.done rect,.node.done circle{fill:var(--run-soft);stroke:var(--run)}
+.node.on rect,.node.on circle{fill:var(--run);stroke:var(--run)}
+.node.on text{fill:var(--on-run)}
+.node.fail rect{fill:var(--err-soft);stroke:var(--err);stroke-width:2.5}
+.node.wait rect{fill:var(--pause-soft);stroke:var(--pause);stroke-width:2.5;stroke-dasharray:6 4;animation:breathe 1.6s ease-in-out infinite}
+.node.focus rect{stroke:var(--human);stroke-width:2.6}
+@keyframes breathe{50%{stroke-opacity:.35}}
+.adot{stroke-width:1.6;fill:var(--surface);stroke:var(--line-strong)}
+.adot.k-conn{fill:var(--err);stroke:var(--err)} .adot.k-value{fill:var(--human);stroke:var(--human)}
+.adot.k-ok{fill:var(--disk);stroke:var(--disk)} .adot.k-timeout{fill:var(--run-soft);stroke:var(--err)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--muted);margin-top:6px;justify-content:center}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:-2px;margin-right:5px;border:1.5px solid}
+.lg-on{background:var(--run);border-color:var(--run)} .lg-done{background:var(--run-soft);border-color:var(--run)}
+.lg-fail{background:var(--err-soft);border-color:var(--err)} .lg-pause{background:var(--pause-soft);border-color:var(--pause);border-style:dashed !important}
+
+/* Politique et état */
+.pol{width:100%;border-collapse:collapse;font-size:12.5px}
+.pol td{padding:3px 6px;border-bottom:1px solid var(--line)}
+.pol td:first-child{font-family:var(--f-mono);white-space:nowrap}
+.pol td:nth-child(2){font-family:var(--f-mono);font-weight:600;overflow-wrap:anywhere}
+.pol td:last-child{font-size:11px;color:var(--muted);text-align:right;white-space:nowrap}
+.pol tr.sep td{border-top:1.5px solid var(--line-strong)}
+.pol tr.hl td{background:var(--human-soft)}
+.pol .src-x{color:var(--human);font-weight:600}
+.counter{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;margin:10px 0 0;font-family:var(--f-mono);font-size:13px;padding:6px 10px;border-radius:8px;background:var(--surface-2)}
+.counter b{font-weight:600}
+.dec{margin-top:10px;border-radius:8px;padding:8px 11px;font-size:13px;border:1.5px solid var(--run);background:var(--run-soft)}
+.dec.p{border-color:var(--pause);background:var(--pause-soft)}
+.dec.e{border-color:var(--err);background:var(--err-soft)}
+.dec.d{border-color:var(--disk);background:var(--disk-soft)}
+.dec h3{font-size:11.5px;text-transform:uppercase;letter-spacing:.08em;margin:0 0 4px;font-weight:600;color:var(--muted)}
+.dec .ln2{font-family:var(--f-mono);font-size:12px;overflow-wrap:anywhere}
+.dec table{border-collapse:collapse;font-size:12px;width:100%}
+.dec td{vertical-align:top;padding:2px 4px}
+.dec td:first-child{font-weight:600;white-space:nowrap}
+.msgs{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:4px}
+.msgs li{font-size:12.5px;padding:5px 8px;border-radius:6px;background:var(--surface-2);overflow-wrap:anywhere}
+.msgs li b{font-family:var(--f-mono);font-weight:600;font-size:11.5px;display:block;color:var(--muted)}
+.msgs li.err{background:var(--err-soft)} .msgs li.err b{color:var(--err)}
+.msgs li.ok{background:var(--disk-soft)} .msgs li.ok b{color:var(--disk)}
+.sub-h{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:12px 0 0;font-weight:600}
+.empty{font-size:12.5px;color:var(--muted);font-style:italic;margin-top:6px}
+
+/* Code */
+.code-h{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:10px 0 4px;font-weight:600;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.code-h:first-of-type{margin-top:0}
+pre.code{margin:0;background:var(--surface-2);border-radius:8px;padding:6px 0;overflow-x:auto;font-family:var(--f-mono);font-size:12.3px;line-height:1.6}
+pre.code .ln{display:block;padding:0 12px;white-space:pre;border-left:3px solid transparent;transition:background .25s;min-height:1.6em}
+pre.code .ln.hl{background:var(--run-soft);border-left-color:var(--run)}
+pre.code .ln.hlp{background:var(--pause-soft);border-left-color:var(--pause)}
+pre.code .ln.hle{background:var(--err-soft);border-left-color:var(--err)}
+pre.code .ln.hld{background:var(--disk-soft);border-left-color:var(--disk)}
+.k{color:var(--human)} .s{color:var(--disk)} .f{color:var(--run)} .c{color:var(--muted);font-style:italic}
+
+/* Terminal */
+.term{background:var(--term-bg);color:var(--term-fg);border-radius:12px;overflow:hidden;border:1px solid var(--term-line);min-width:0;display:flex;flex-direction:column;transition:opacity .4s}
+.term.idle{opacity:.6}
+.term-h{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 14px;border-bottom:1px solid var(--term-line);font-size:13px}
+.term-h .who{font-weight:600}
+.term-h .who small{font-weight:400;color:var(--term-muted)}
+.pill{font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:99px;text-transform:uppercase;letter-spacing:.05em;background:#222b37;color:var(--term-muted)}
+.pill.run{background:#173a2f;color:#5fe0b5}
+.pill.dead{background:#222b37;color:#c9d2de}
+.term-b{padding:10px 14px 14px;font-family:var(--f-mono);font-size:12.6px;line-height:1.6;min-height:120px;overflow-x:auto}
+.term-b div{white-space:pre-wrap;overflow-wrap:anywhere}
+.term-b .cmd{color:#9cc2ff}
+.term-b .sys{color:var(--term-muted);font-style:italic}
+.term-b .warn{color:#ffc561}
+.term-b .bad{color:#ff8f8f}
+.term-b .good{color:#78e2bd}
+.term-b .spin{color:var(--term-muted)}
+.term-b .spin::after{content:"";display:inline-block;width:1ch;animation:dots 1.2s steps(4) infinite}
+@keyframes dots{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
+.fresh{animation:fresh .45s ease both}
+@keyframes fresh{from{opacity:0;transform:translateY(5px)}}
+.blk.fresh{animation:grow .5s ease both;transform-origin:left center}
+@keyframes grow{from{opacity:0;transform:scaleX(.2)}}
+
+/* À retenir */
+.lessons{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+.lesson{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px;min-width:0}
+.lesson .n{font-family:var(--f-display);font-weight:700;font-size:13px;color:var(--muted);letter-spacing:.06em}
+.lesson h3{font-family:var(--f-display);font-size:18px;margin:2px 0 6px;line-height:1.2}
+.lesson p{margin:0;font-size:14px;color:var(--muted)}
+.lesson p code{color:var(--fg)}
+.sect-h{font-family:var(--f-display);font-size:20px;font-weight:700;margin:10px 0 0}
+
+@media (max-width:1180px){
+  .views{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  .views .panel.code-p{grid-column:1 / -1}
+  .lessons{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:760px){
+  .stage{grid-template-columns:1fr;padding:14px}
+  .controls{align-items:stretch}
+  .dots{justify-content:flex-start;max-width:none}
+  .views,.lessons{grid-template-columns:1fr}
+  .clock .t{font-size:24px}
+  .wlab .full{display:none} .wlab .short{display:inline}
+  .btn{padding:8px 10px}
+}
+@media (prefers-reduced-motion:reduce){
+  *{animation:none !important;transition:none !important}
+}
+</style>
+</head>
+<body>
+
+<div class="app">
+  <header class="top">
+    <div>
+      <h1>Retry, timeout et repli, pas à pas</h1>
+      <p class="sub">L'outil <code>ping_serveur</code> interroge une supervision instable. Le nœud <code>tools</code> réessaie, coupe ce qui traîne et se replie proprement. Le code est celui du corrigé de l'exercice 2.2 (<code>notebooks/_sources/build_ex2_2.py</code>, séquence J2-04). <code>construction/etape_06_structure_robustesse.py</code> déclare le même nœud avec un timeout de 10 s au lieu de 1 s.</p>
+    </div>
+    <div class="clock" aria-label="Temps écoulé dans le nœud tools">
+      <span class="lbl">Temps dans tools</span>
+      <span class="t" id="clock">0,00 s</span>
+      <span class="gap" id="clockgap">pas démarré</span>
+    </div>
+  </header>
+
+  <section class="tl-panel" aria-label="Frise temporelle du nœud tools">
+    <div class="tl-head">
+      <h2>La frise du nœud tools</h2>
+      <span class="ph">En secondes, depuis le début de la première tentative. Durées réelles, gigue tirée pour l'exemple.</span>
+    </div>
+    <div class="tl" aria-hidden="true"><div class="tl-in" id="tl"></div></div>
+    <div class="tl-legend"><span><i class="lg-conn"></i>ConnectionError</span><span><i class="lg-to"></i>tentative coupée par le timeout</span><span><i class="lg-val"></i>ValueError</span><span><i class="lg-ok"></i>tentative réussie</span><span><i class="lg-wait"></i>attente avant le nouvel essai</span></div>
+  </section>
+
+  <section class="stage" aria-live="polite">
+    <div>
+      <div class="cap-step"><span id="stepno">Étape 0 / 11</span><span class="phase-chip p0" id="phasechip">Préparer</span></div>
+      <h2 class="cap-title" id="captitle"></h2>
+      <p class="cap-text" id="captext"></p>
+      <div class="choices" id="choices" hidden>
+        <div class="grp">
+          <span>Ce que fait la supervision</span>
+          <div class="seg-btns" id="scBtns">
+            <button type="button" data-sc="deux">répond à la 2e tentative</button>
+            <button type="button" data-sc="jamais">ne répond jamais</button>
+            <button type="button" data-sc="lente">trop lente (3 s)</button>
+            <button type="button" data-sc="valeur">ValueError (hypothèse)</button>
+          </div>
+        </div>
+        <div class="grp">
+          <span>max_attempts</span>
+          <div class="stepper">
+            <button type="button" id="maxMinus" aria-label="Moins de tentatives">−</button>
+            <output id="maxOut">3</output>
+            <button type="button" id="maxPlus" aria-label="Plus de tentatives">+</button>
+          </div>
+        </div>
+        <div class="grp">
+          <span>retry_on</span>
+          <div class="seg-btns" id="roBtns">
+            <button type="button" class="mono" data-ro="conn">ConnectionError</button>
+            <button type="button" class="mono" data-ro="conn_to">(ConnectionError, NodeTimeoutError)</button>
+            <button type="button" data-ro="defaut">par défaut</button>
+          </div>
+        </div>
+        <div class="grp">
+          <span>jitter</span>
+          <div class="seg-btns" id="jiBtns">
+            <button type="button" class="mono" data-ji="1">True</button>
+            <button type="button" class="mono" data-ji="0">False</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="controls">
+      <div class="btns">
+        <button class="btn" id="bReset" title="Recommencer">⟲</button>
+        <button class="btn" id="bPrev">◀ Précédent</button>
+        <button class="btn primary" id="bPlay">▶ Lecture</button>
+        <button class="btn" id="bNext">Suivant ▶</button>
+      </div>
+      <div class="dots" id="dots"></div>
+      <div class="hint">Clavier : ← → pour avancer, espace pour lecture/pause</div>
+    </div>
+  </section>
+
+  <div class="views">
+    <section class="panel">
+      <h2>Le graphe</h2>
+      <p class="ph">Le nœud en cours, le chemin parcouru, les tentatives de tools.</p>
+      <svg id="graph" viewBox="0 0 360 360" role="img" aria-label="Graphe : START, agent, tools, gestionnaire d'erreur de tools, END">
+        <defs>
+          <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" style="fill:var(--line-strong)"/></marker>
+          <marker id="arrRun" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" style="fill:var(--run)"/></marker>
+          <marker id="arrErr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" style="fill:var(--err)"/></marker>
+        </defs>
+        <path class="edge" id="e_sa" d="M180 31 L180 48"/>
+        <path class="edge" id="e_ae" d="M240 70 L306 70"/>
+        <path class="edge" id="e_at" d="M162 90 L162 163"/>
+        <path class="edge" id="e_ta" d="M198 165 L198 92"/>
+        <path class="edge errpath" id="e_th" d="M180 209 L180 278"/>
+        <path class="edge alt" id="e_ha" d="M95 302 C 30 302, 30 70, 118 70"/>
+        <text class="elab" x="156" y="132" text-anchor="end">tool_calls</text>
+        <text class="elab" x="204" y="132">arête normale</text>
+        <text class="elab" x="186" y="250">exception finale</text>
+        <text class="elab" x="250" y="62">réponse</text>
+        <text class="elab" transform="rotate(-90 30 190)" x="30" y="190" text-anchor="middle">goto="agent"</text>
+
+        <g class="node" id="n-START"><circle cx="180" cy="22" r="9"/><text x="196" y="26" class="elab">START</text></g>
+        <g class="node" id="n-agent"><rect x="120" y="50" width="120" height="40" rx="8"/><text x="180" y="75" text-anchor="middle">agent</text></g>
+        <g class="node" id="n-END"><circle cx="320" cy="70" r="11"/><text x="320" y="98" class="elab" text-anchor="middle">END</text></g>
+        <g class="node" id="n-tools"><rect x="120" y="165" width="120" height="44" rx="8"/><text x="180" y="192" text-anchor="middle">tools</text></g>
+        <text class="elab" x="250" y="160">tentatives</text>
+        <g id="adots"></g>
+        <g class="node" id="n-handler"><rect x="95" y="280" width="170" height="46" rx="8"/><text x="180" y="300" text-anchor="middle" class="small">__error_handler__tools</text><text x="180" y="316" text-anchor="middle" class="elab">outils_en_echec</text></g>
+      </svg>
+      <div class="legend"><span><i class="lg-on"></i>en cours</span><span><i class="lg-done"></i>déjà exécuté</span><span><i class="lg-fail"></i>en échec</span><span><i class="lg-pause"></i>en attente</span></div>
+    </section>
+
+    <section class="panel">
+      <h2>La politique et l'état</h2>
+      <p class="ph">Les réglages du nœud <code>tools</code> (le rose marque ceux que l'étape utilise), la décision de LangGraph, les messages de l'état.</p>
+      <table class="pol" id="pol"></table>
+      <div class="counter" id="counter"></div>
+      <div id="dec"></div>
+      <div class="sub-h">state["messages"]</div>
+      <div id="msgs"></div>
+    </section>
+
+    <section class="panel code-p">
+      <h2>Le code</h2>
+      <p class="ph">En haut, ce que vous écrivez. En bas, ce que LangGraph fait à chaque échec. La ligne surlignée est celle qui agit.</p>
+      <div class="code-h"><span>Le nœud tools (corrigé de l'exercice 2.2)</span></div>
+      <pre class="code" id="codeUser"></pre>
+      <div class="code-h"><span>La boucle de LangGraph</span><span>simplifiée de <code>langgraph/pregel/_retry.py</code> (1.2.12)</span></div>
+      <pre class="code" id="codeLoop"></pre>
+    </section>
+  </div>
+
+  <section class="term idle" id="term">
+    <div class="term-h"><span class="who">Journal de l'exécution <small>les lignes INFO viennent du logger langgraph, visibles si le logging Python est réglé sur INFO</small></span><span class="pill" id="pill">pas lancé</span></div>
+    <div class="term-b" id="tb"></div>
+  </section>
+
+  <h2 class="sect-h">Ce qu'il faut retenir</h2>
+  <div class="lessons">
+    <article class="lesson"><div class="n">1 · LE RYTHME</div><h3>Les attentes doublent, la gigue s'ajoute</h3><p>Attente n = <code>min(max_interval, initial_interval × backoff_factor^(n−1))</code>, plus un tirage entre 0 et 1 s si <code>jitter=True</code>. Avec 0,2 s : 0,2 puis 0,4 s. <code>max_attempts</code> compte la première tentative.</p></article>
+    <article class="lesson"><div class="n">2 · LE TRI</div><h3>retry_on décide ce qui mérite un nouvel essai</h3><p>Le dépôt rejoue seulement <code>ConnectionError</code>. La règle par défaut rejoue aussi <code>NodeTimeoutError</code>, jamais <code>ValueError</code>. Une erreur non rejouée part tout de suite vers le repli, sans attente.</p></article>
+    <article class="lesson"><div class="n">3 · LE CHRONOMÈTRE</div><h3>run_timeout borne une tentative, pas le total</h3><p><code>NodeTimeoutError</code> coupe la tentative et annule l'appel. Le chronomètre repart à chaque essai. Le nœud doit être <code>async</code> : sinon <code>compile()</code> lève une <code>ValueError</code>.</p></article>
+    <article class="lesson"><div class="n">4 · LE REPLI</div><h3>error_handler, avec un goto</h3><p>Le gestionnaire reçoit <code>NodeError</code> (<code>node</code>, <code>error</code>). Les arêtes normales du nœud ne sont plus suivies : renvoyez <code>Command(update=…, goto="agent")</code>, avec un <code>ToolMessage</code> par appel en attente.</p></article>
+  </div>
+</div>
+
+<script>
+(function(){
+"use strict";
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fr1 = x => String(Math.round(x * 10) / 10).replace(".", ",");
+const fr2 = x => x.toFixed(2).replace(".", ",");
+const SUP = n => String(n).split("").map(d => "⁰¹²³⁴⁵⁶⁷⁸⁹"[+d]).join("");
+
+const QUESTION = "Le serveur srv-erp-02 répond-il au ping ?";
+const PING_OK = "srv-erp-02 : aucune réponse au ping (100 % de perte)";   // srv-erp-02 est « hors ligne » dans l'inventaire
+const JIT = [0.70, 0.82, 0.31, 0.56];                                    // tirages d'exemple de random.uniform(0, 1)
+const EXC = {
+  conn:    {name: "ConnectionError",  msg: k => `supervision injoignable (appel n°${k})`},
+  timeout: {name: "NodeTimeoutError", msg: () => "Node 'tools' exceeded its run timeout of 1.000s (elapsed: 1.000s)."},
+  value:   {name: "ValueError",       msg: () => "réponse de supervision illisible"},
+};
+const RO = {
+  conn:    {code: "retry_on=ConnectionError", label: "ConnectionError", expr: "isinstance(exc, ConnectionError)"},
+  conn_to: {code: "retry_on=(ConnectionError, NodeTimeoutError)", label: "(ConnectionError, NodeTimeoutError)", expr: "isinstance(exc, (ConnectionError, NodeTimeoutError))"},
+  defaut:  {code: "", label: "default_retry_on", expr: "default_retry_on(exc)"},
+};
+/* même résultat que langgraph : ConnectionError est rejouée par les trois réglages ;
+   NodeTimeoutError n'hérite pas de TimeoutError, donc default_retry_on la rejoue ; ValueError ne l'est par aucun */
+function matches(ro, kind){
+  if (kind === "conn") return true;
+  if (kind === "timeout") return ro !== "conn";
+  return false;
+}
+function roReason(ro, kind){
+  if (ro !== "defaut") return "";
+  return kind === "conn" ? " (première règle : ConnectionError est rejouée)"
+       : kind === "timeout" ? " (NodeTimeoutError n'hérite pas de TimeoutError : aucune règle ne l'exclut)"
+       : " (ValueError fait partie des erreurs jamais rejouées)";
+}
+
+/* ---------- la simulation : la boucle de arun_with_retry, avec les valeurs du dépôt ---------- */
+function simulate(c){
+  const att = []; let t = 0, fails = 0, end = null;
+  for (let k = 1; k <= 10; k++){
+    const kind = c.sc === "deux" ? (k === 1 ? "conn" : "ok") : c.sc === "jamais" ? "conn" : c.sc === "lente" ? "timeout" : "value";
+    const dur = kind === "timeout" ? 1.0 : 0;
+    const a = {k, kind, start: t, end: t + dur};
+    att.push(a); t += dur;
+    if (kind === "ok"){ end = "ok"; break; }
+    a.retryable = matches(c.ro, kind);
+    if (!a.retryable){ end = "nonrejouable"; break; }
+    fails++; a.fails = fails;
+    if (fails >= c.max){ end = "epuise"; break; }
+    const base = Math.min(128, 0.2 * Math.pow(2, fails - 1));
+    const jit = c.jitter ? JIT[fails - 1] : 0;
+    a.wait = {start: t, base, jit, total: base + jit};
+    t += base + jit;
+  }
+  const last = att[att.length - 1];
+  let span = t; if (c.sc === "lente") span = Math.max(span, last.start + 3);
+  const waitSum = att.reduce((x, a) => x + (a.wait ? a.wait.total : 0), 0);
+  return {att, end, total: t, waitSum, last, scale: Math.max(1.2, span * 1.06 + 0.12)};
+}
+
+/* ---------- le code affiché ---------- */
+function codeUser(c){
+  const changed = c.max !== 3 || c.ro !== "conn" || !c.jitter;
+  const args = `max_attempts=${c.max}, initial_interval=0.2` + (RO[c.ro].code ? ", " + RO[c.ro].code : "") + (c.jitter ? "" : ", jitter=False");
+  return [
+    ["o1", '<span class="k">def</span> <span class="f">outils_en_echec</span>(state: MessagesState, error: NodeError) -> Command:'],
+    ["o2", '    en_attente = state[<span class="s">"messages"</span>][-1].tool_calls'],
+    ["o3", '    reponses = [<span class="f">ToolMessage</span>(content=<span class="s">f"supervision indisponible ({type(error.error).__name__}) : résultat inconnu"</span>,'],
+    ["o4", '                            tool_call_id=appel[<span class="s">"id"</span>], name=appel[<span class="s">"name"</span>], status=<span class="s">"error"</span>) <span class="k">for</span> appel <span class="k">in</span> en_attente]'],
+    ["o5", '    <span class="k">return</span> <span class="f">Command</span>(update={<span class="s">"messages"</span>: reponses}, goto=<span class="s">"agent"</span>)   <span class="c"># sans goto, le graphe s\'arrêterait ici</span>'],
+    ["o6", ''],
+    ["o7", 'OPTIONS_TOOLS = {'],
+    ["o8", `    <span class="s">"retry_policy"</span>: <span class="f">RetryPolicy</span>(${args}),` + (changed ? '   <span class="c"># réglé dans l\'animation</span>' : '')],
+    ["o9", '    <span class="s">"timeout"</span>: <span class="f">TimeoutPolicy</span>(run_timeout=1),'],
+    ["o10", '    <span class="s">"error_handler"</span>: outils_en_echec,'],
+    ["o11", '}'],
+    ["o12", 'b.<span class="f">add_node</span>(<span class="s">"tools"</span>, <span class="f">ToolNode</span>(OUTILS), **(options_tools <span class="k">or</span> {}))   <span class="c"># dans construire()</span>'],
+  ];
+}
+const CODE_LOOP = [
+  ["r1", 'attempts = 0                                    <span class="c"># échecs comptés</span>'],
+  ["r2", '<span class="k">while</span> True:'],
+  ["r3", '    <span class="k">try</span>:'],
+  ["r4", '        task.writes.<span class="f">clear</span>()                     <span class="c"># oublie les écritures de l\'essai raté</span>'],
+  ["r5", '        <span class="k">return await</span> <span class="f">_arun_with_timeout</span>(task, …)  <span class="c"># le nœud, sous chronomètre run_timeout</span>'],
+  ["r6", '    <span class="k">except</span> Exception <span class="k">as</span> exc:'],
+  ["r7", '        <span class="k">if not</span> <span class="f">_should_retry_on</span>(policy, exc):   <span class="c"># retry_on</span>'],
+  ["r8", '            <span class="k">raise</span>                               <span class="c"># → error_handler du nœud</span>'],
+  ["r9", '        attempts += 1'],
+  ["r10", '        <span class="k">if</span> attempts >= policy.max_attempts:'],
+  ["r11", '            <span class="k">raise</span>                               <span class="c"># → error_handler du nœud</span>'],
+  ["r12", '        interval = <span class="f">min</span>(policy.max_interval,'],
+  ["r13", '                       policy.initial_interval * policy.backoff_factor ** (attempts - 1))'],
+  ["r14", '        sleep_time = interval + random.<span class="f">uniform</span>(0, 1) <span class="k">if</span> policy.jitter <span class="k">else</span> interval'],
+  ["r15", '        <span class="k">await</span> asyncio.<span class="f">sleep</span>(sleep_time)'],
+  ["r16", '        logger.<span class="f">info</span>(<span class="s">f"Retrying task {task.name} after {sleep_time:.2f} seconds …"</span>)'],
+];
+$("codeLoop").innerHTML = CODE_LOOP.map(([id, h]) => `<span class="ln" data-l="${id}">${h}</span>`).join("");
+
+/* ---------- le modèle ---------- */
+function initial(){
+  return { t: 0, nAtt: 0, nWait: 0, dots: [], attempts: 0, msgs: [], term: [], trail: [], doneN: [],
+           toolsFailed: false, handlerMark: false, okMark: false, termState: "idle" };
+}
+function resetTransient(s){
+  s.active = null; s.activeCls = "on"; s.edge = null; s.focus = []; s.code = {}; s.dec = null; s.polHl = [];
+  s.ghost = null; s.curAtt = null; s.curWait = null; s.title = ""; s.text = ""; s.running = false;
+}
+const trail = (s, e) => { s.edge = e; if (!s.trail.includes(e)) s.trail.push(e); };
+const done = (s, n) => { if (!s.doneN.includes(n)) s.doneN.push(n); };
+const hl = (s, cls, ids) => ids.forEach(id => { s.code[id] = cls; });
+const decBox = (cls, h, lines) => ({cls, h, lines});
+const MSG_H = {who: "HumanMessage", txt: QUESTION};
+const MSG_AI = {who: "AIMessage · tool_calls", txt: "ping_serveur(hote='srv-erp-02'), id='appel-1'"};
+
+/* ---------- les étapes, construites selon les choix ---------- */
+function makeSteps(c){
+  const sim = simulate(c);
+  const ro = RO[c.ro];
+  const S = [];
+  const P = (ph, f, dur) => S.push({ph, f, dur: dur || 7000});
+
+  P("p0", s => {
+    s.title = "Le nœud tools et ses trois options";
+    s.text = "Dans le corrigé de l'exercice 2.2, l'agent support de NordTech SA exécute ses outils dans le nœud <code>tools</code>. L'un d'eux, <code>ping_serveur</code>, interroge une supervision qui tombe souvent. Trois protections se déclarent sur ce nœud, dans <code>add_node</code> : <code>retry_policy</code>, <code>timeout</code> et <code>error_handler</code>.";
+    s.focus = ["tools"]; hl(s, "hl", ["o7","o8","o9","o10","o11","o12"]);
+    s.polHl = ["max_attempts","initial_interval","retry_on","run_timeout"];
+  }, 6000);
+  P("p0", s => {
+    s.title = "RetryPolicy : combien de fois, à quel rythme";
+    s.text = `<code>max_attempts=${c.max}</code> : ${c.max} tentative${c.max > 1 ? "s" : ""} au total, la première comprise. L'attente avant un nouvel essai part de <code>initial_interval=0.2</code> s et double à chaque échec (<code>backoff_factor=2.0</code>, valeur par défaut), sans dépasser <code>max_interval=128</code> s. ` +
+      (c.jitter ? "Avec <code>jitter=True</code>, la valeur par défaut, LangGraph ajoute un tirage au hasard entre 0 et 1 s." : "Vous avez choisi <code>jitter=False</code> : aucune gigue ne s'ajoute.");
+    s.focus = ["tools"]; hl(s, "hl", ["o8","r12","r13","r14","r15"]);
+    s.polHl = ["max_attempts","initial_interval","backoff_factor","max_interval","jitter"];
+    s.dec = decBox("", "La formule de l'attente", [
+      "attente n = min(max_interval, initial_interval × backoff_factor^(n−1))",
+      "n = 1 → 0,2 s · n = 2 → 0,4 s · n = 3 → 0,8 s",
+      c.jitter ? "puis + random.uniform(0, 1) s, car jitter=True" : "jitter=False : rien ne s'ajoute",
+    ]);
+  });
+  P("p0", s => {
+    s.title = "retry_on : quelles erreurs on rejoue";
+    s.text = "Avant d'attendre, LangGraph demande à <code>retry_on</code> si l'erreur mérite un nouvel essai. Le corrigé rejoue seulement <code>ConnectionError</code> : une panne réseau peut passer, un argument invalide restera invalide. Sans <code>retry_on</code>, LangGraph applique sa règle par défaut, <code>default_retry_on</code>, détaillée à droite.";
+    s.focus = ["tools"]; hl(s, "hl", ["o8","r7","r8"]); s.polHl = ["retry_on"];
+    s.dec = decBox("", "default_retry_on (langgraph/_internal/_retry.py)", null);
+    s.dec.table = [
+      ["rejouées", "ConnectionError · HTTP 5xx (httpx, requests) · toute exception absente de la liste ci-dessous, dont NodeTimeoutError"],
+      ["jamais", "ValueError · TypeError · ArithmeticError · ImportError · LookupError (KeyError…) · NameError · SyntaxError · RuntimeError · ReferenceError · StopIteration · OSError, donc aussi TimeoutError · HTTP 4xx"],
+    ];
+  });
+  P("p0", s => {
+    s.title = "TimeoutPolicy : un chronomètre par tentative";
+    s.text = "<code>TimeoutPolicy(run_timeout=1)</code> coupe une tentative qui dépasse 1 s et lève <code>NodeTimeoutError</code>. Le chronomètre repart de zéro à chaque tentative : il borne un essai, pas la durée totale. LangGraph annule une coroutine, donc le nœud doit être asynchrone, comme <code>ping_serveur</code>. Sur un nœud synchrone, <code>compile()</code> lève une <code>ValueError</code>.";
+    s.focus = ["tools"]; hl(s, "hl", ["o9","r5"]); s.polHl = ["run_timeout"];
+    s.dec = decBox("", "Le même nœud dans le dépôt", [
+      "corrigé Ex 2.2 : TimeoutPolicy(run_timeout=1)",
+      "construction/etape_06 : TimeoutPolicy(run_timeout=10)",
+    ]);
+  });
+  P("p0", s => {
+    s.title = "error_handler : le plan de secours";
+    s.text = "Quand l'erreur n'est pas rejouée, ou quand les tentatives sont épuisées, LangGraph appelle <code>outils_en_echec</code> au lieu de faire échouer tout le graphe. Son paramètre typé <code>NodeError</code> lui donne le nom du nœud (<code>error.node</code>) et l'exception (<code>error.error</code>). Sans gestionnaire, l'exception remonterait jusqu'à <code>ainvoke()</code>.";
+    s.focus = ["handler"]; hl(s, "hl", ["o1","o2","o3","o4","o5","o10"]); hl(s, "hle", ["r8","r11"]);
+  });
+  P("p1", s => {
+    s.msgs.push(MSG_H, MSG_AI);
+    s.term.push({c: "cmd", x: `>>> await graphe.ainvoke({"messages": [HumanMessage("${QUESTION}")]})`});
+    s.termState = "run"; s.running = true;
+    done(s, "START"); done(s, "agent"); s.trail.push("e_sa"); trail(s, "e_at"); s.active = "tools";
+    s.title = "L'agent demande ping_serveur";
+    s.text = `Un agent N1 de HelpDesk-Ops demande : « ${QUESTION} ». Le modèle répond par un appel d'outil, <code>ping_serveur(hote="srv-erp-02")</code>, et le graphe passe au nœud <code>tools</code>. <b>Choisissez ci-dessous le comportement de la supervision.</b> Réglez si vous voulez <code>max_attempts</code>, <code>retry_on</code> et <code>jitter</code>, puis avancez.`;
+    hl(s, "hl", ["o12"]);
+  }, 8000);
+
+  /* une tentative commence */
+  function startAttempt(s, i, log = true){
+    const a = sim.att[i];
+    if (log && i > 0){
+      const p = sim.att[i - 1];
+      s.term.push({c: "sys", x: `INFO langgraph.pregel._retry: Retrying task tools after ${p.wait.total.toFixed(2)} seconds (attempt ${p.fails}) after ${EXC[p.kind].name} ${EXC[p.kind].msg(p.k)}`});
+    }
+    if (log) s.term.push({x: `[t=${fr2(a.start)} s] tools · tentative ${a.k} · ping_serveur({'hote': 'srv-erp-02'})`});
+    s.nAtt = i + 1; s.nWait = i; s.dots[i] = a.kind; s.curAtt = i; s.t = a.end;
+    s.active = "tools"; s.running = true; done(s, "START"); done(s, "agent");
+  }
+  function failLine(s, a, log = true){
+    const e = EXC[a.kind];
+    if (log) s.term.push({c: a.kind === "timeout" ? "warn" : "bad", x: `[t=${fr2(a.end)} s] ${e.name}: ${e.msg(a.k)}`});
+    s.activeCls = "fail";
+    if (a.kind === "timeout") s.ghost = {start: a.start, end: a.start + 3};
+  }
+  function waitReveal(s, a, i){
+    s.nWait = i + 1; s.curWait = i; s.t = a.wait.start + a.wait.total; s.attempts = a.fails;
+  }
+  const ord = k => k + "e";
+  const waitCalc = a => `interval = min(128.0, 0.2 × 2.0 ** ${a.fails - 1}) = ${fr1(a.wait.base).replace(",", ".")}`;
+  const sleepCalc = a => c.jitter ? `sleep_time = ${fr1(a.wait.base).replace(",", ".")} + ${a.wait.jit.toFixed(2)} = ${a.wait.total.toFixed(2)} s` : `sleep_time = ${a.wait.total.toFixed(2)} s (jitter=False)`;
+
+  sim.att.forEach((a, i) => {
+    const last = i === sim.att.length - 1;
+    const e = EXC[a.kind];
+
+    if (a.kind === "ok"){
+      P("pd", s => {
+        startAttempt(s, i); s.okMark = true; s.activeCls = "on";
+        s.term.push({c: "good", x: `[t=${fr2(a.end)} s] ToolMessage(content='${PING_OK}')`});
+        s.msgs.push({who: "ToolMessage", txt: PING_OK, cls: "ok"});
+        s.title = `Tentative ${a.k} : la supervision répond`;
+        s.text = `LangGraph exécute le nœud <code>tools</code> une ${ord(a.k)} fois, en entier, avec un chronomètre neuf. Cette fois, <code>ping_serveur</code> renvoie « ${PING_OK} ». L'outil a fonctionné : il rapporte que srv-erp-02 est hors ligne. Ce résultat négatif est une vraie réponse, que l'agent peut transmettre.`;
+        hl(s, "hld", ["r4","r5"]);
+        s.dec = decBox("d", "Résultat", [`tentative ${a.k} réussie · return`, "aucune exception : retry_on n'est pas consulté"]);
+      });
+      return;
+    }
+
+    if (!last){
+      if (i === 0){
+        P("p1", s => {
+          startAttempt(s, i); failLine(s, a);
+          s.title = attemptTitle(a);
+          s.text = attemptText(a, i);
+          hl(s, "hl", ["r4","r5"]); hl(s, "hle", ["r6"]);
+          s.dec = decBox("e", "L'exception remonte", [`exc = ${e.name}("${e.msg(a.k)}")`]);
+        });
+        P("pz", s => {
+          startAttempt(s, i, false); s.activeCls = "wait"; waitReveal(s, a, i);
+          s.title = "retry_on dit oui : on attend";
+          s.text = `<code>${ro.expr}</code> renvoie <code>True</code>${roReason(c.ro, a.kind)}. Le compteur <code>attempts</code> passe à 1, sous <code>max_attempts = ${c.max}</code> : on réessaiera. Attente : min(128, 0,2 × 2⁰) = 0,2 s` +
+            (c.jitter ? `, plus une gigue de ${fr2(a.wait.jit)} s (tirage d'exemple), soit <b>${fr2(a.wait.total)} s</b>. La gigue évite que des dizaines de clients réessaient à la même milliseconde.` : `. Avec <code>jitter=False</code>, pas de gigue : <b>0,20 s</b> exactement.`);
+          hl(s, "hlp", ["r7","r9","r10","r12","r13","r14","r15"]);
+          s.polHl = ["retry_on","max_attempts","initial_interval","backoff_factor","jitter"];
+          s.dec = decBox("p", "Décision de LangGraph", [`${ro.expr} → True`, `attempts = 1 < max_attempts = ${c.max}`, waitCalc(a), sleepCalc(a)]);
+        });
+      } else {
+        P("pz", s => {
+          startAttempt(s, i); failLine(s, a); s.activeCls = "wait"; waitReveal(s, a, i);
+          s.title = `Tentative ${a.k} échoue, attente plus longue`;
+          const quoi = a.kind === "timeout" ? `<code>NodeTimeoutError</code>, coupure à ${fr2(a.end)} s` : `<code>ConnectionError</code> (appel n°${a.k})`;
+          s.text = `Le nœud <code>tools</code> est rejoué en entier, avec un chronomètre neuf. Nouvel échec : ${quoi}. <code>attempts</code> passe à ${a.fails}, toujours sous ${c.max}. Attente : min(128, 0,2 × 2${SUP(a.fails - 1)}) = ${fr1(a.wait.base)} s` +
+            (c.jitter ? ` + ${fr2(a.wait.jit)} s de gigue = <b>${fr2(a.wait.total)} s</b>. L'intervalle de base a doublé.` : ` (<code>jitter=False</code>). L'intervalle a doublé.`);
+          hl(s, "hlp", ["r9","r10","r12","r13","r14","r15"]); hl(s, "hle", ["r6"]);
+          s.polHl = ["backoff_factor","max_interval","jitter"];
+          s.dec = decBox("p", "Décision de LangGraph", [`exc = ${e.name}`, `${ro.expr} → True`, `attempts = ${a.fails} < max_attempts = ${c.max}`, waitCalc(a), sleepCalc(a)]);
+        });
+      }
+      return;
+    }
+
+    /* dernière tentative, en échec */
+    P("p1", s => {
+      startAttempt(s, i); failLine(s, a);
+      s.title = attemptTitle(a);
+      s.text = attemptText(a, i);
+      hl(s, "hl", ["r4","r5"]); hl(s, "hle", ["r6"]);
+      s.dec = decBox("e", "L'exception remonte", [`exc = ${e.name}("${e.msg(a.k)}")`]);
+    });
+    if (sim.end === "epuise"){
+      P("pe", s => {
+        startAttempt(s, i, false); failLine(s, a, false); s.ghost = null; s.attempts = a.fails;
+        s.title = "Tentatives épuisées";
+        s.text = c.max > 1
+          ? `<code>${ro.expr}</code> renvoie <code>True</code>, mais le compteur <code>attempts</code> passe à ${c.max} et atteint <code>max_attempts = ${c.max}</code>. LangGraph n'attend plus : il relance l'exception (<code>raise</code>). Sans gestionnaire d'erreur, cette <code>${e.name}</code> ferait échouer tout <code>ainvoke()</code>. Ici, LangGraph planifie <code>outils_en_echec</code> à la place.`
+          : `Avec <code>max_attempts = 1</code>, la première tentative est aussi la dernière. <code>attempts</code> passe à 1 et atteint déjà le maximum : aucune attente, aucun nouvel essai. LangGraph relance l'exception et planifie <code>outils_en_echec</code>.`;
+        hl(s, "hle", ["r9","r10","r11"]); s.polHl = ["max_attempts"];
+        s.dec = decBox("e", "Décision de LangGraph", [`${ro.expr} → True`, `attempts = ${c.max} >= max_attempts = ${c.max} → raise`]);
+      });
+    } else {
+      P("pe", s => {
+        startAttempt(s, i, false); failLine(s, a, false); s.ghost = null;
+        s.title = "retry_on dit non : pas de nouvel essai";
+        const pourquoi = a.kind === "timeout"
+          ? "Le corrigé rejoue seulement <code>ConnectionError</code>. Une supervision lente le restera dans la seconde qui suit : plusieurs essais coûteraient une seconde chacun pour rien. Pour comparer, choisissez un <code>retry_on</code> qui accepte <code>NodeTimeoutError</code>."
+          : "Une réponse illisible le restera au prochain essai. Même la règle par défaut ne rejoue pas <code>ValueError</code>.";
+        s.text = `<code>${ro.expr}</code> renvoie <code>False</code>${roReason(c.ro, a.kind)}. LangGraph relance l'exception tout de suite, sans attente, et le compteur <code>attempts</code> reste à 0. ${pourquoi}`;
+        hl(s, "hle", ["r7","r8"]); s.polHl = ["retry_on"];
+        s.dec = decBox("e", "Décision de LangGraph", [`exc = ${e.name}`, `${ro.expr} → False → raise`]);
+      });
+    }
+  });
+
+  function attemptTitle(a){
+    if (a.kind === "conn") return a.k === 1 ? "Tentative 1 : connexion refusée" : `Tentative ${a.k} : encore refusée`;
+    if (a.kind === "timeout") return `Tentative ${a.k} : coupée au bout de 1 s`;
+    return "Tentative 1 : ValueError";
+  }
+  function attemptText(a, i){
+    if (a.kind === "conn") return a.k === 1
+      ? "Le nœud <code>tools</code> démarre, et le chronomètre de 1 s avec lui. <code>ping_serveur</code> lève aussitôt <code>ConnectionError: supervision injoignable (appel n°1)</code>. Le <code>ToolNode</code>, avec son réglage par défaut, laisse remonter cette erreur jusqu'à la boucle de LangGraph."
+      : `LangGraph exécute le nœud <code>tools</code> une ${ord(a.k)} fois, en entier, avec un chronomètre neuf. La supervision refuse toujours : <code>ConnectionError</code> (appel n°${a.k}).`;
+    if (a.kind === "timeout") return a.k === 1
+      ? "La supervision met 3 s à répondre. À 1,0 s, le chronomètre de <code>TimeoutPolicy</code> se déclenche : LangGraph annule l'appel en cours et lève <code>NodeTimeoutError</code>. On n'attend pas les 2 s restantes."
+      : `Nouvelle tentative, nouveau chronomètre de 1 s. La supervision est toujours aussi lente : coupure à ${fr2(a.end)} s, <code>NodeTimeoutError</code> une ${ord(a.k)} fois.`;
+    return "Hypothèse pour la démonstration : une variante de <code>ping_serveur</code> reçoit une réponse illisible et lève <code>ValueError</code>. Par défaut, le <code>ToolNode</code> capture seulement les erreurs d'arguments du modèle. Cette <code>ValueError</code> remonte donc jusqu'à la boucle de LangGraph.";
+  }
+
+  /* la fin, selon le chemin */
+  const lastE = EXC[sim.last.kind];
+  const pastAll = s => { s.nAtt = sim.att.length; s.nWait = sim.att.length - 1; s.t = sim.total; sim.att.forEach((a, i) => { s.dots[i] = a.kind; }); };
+  if (sim.end === "ok"){
+    P("pd", s => {
+      pastAll(s); done(s, "tools"); done(s, "START"); done(s, "agent"); trail(s, "e_ta"); s.active = "agent"; s.running = true;
+      s.title = "Succès : l'arête normale ramène à l'agent";
+      s.text = "Le nœud a réussi, donc LangGraph suit son arête normale <code>tools → agent</code>. L'état contient un seul <code>ToolMessage</code> : avant chaque essai, LangGraph efface les écritures de l'essai raté (<code>task.writes.clear()</code>). Un retry rejoue tout le nœud : un outil qui écrit quelque chose doit être idempotent.";
+      hl(s, "hld", ["r4"]);
+      s.dec = decBox("d", "Ce que voit l'agent", ["1 ToolMessage, celui de la tentative réussie", "aucune trace de l'échec dans state[\"messages\"]"]);
+    });
+    P("pd", s => {
+      pastAll(s); done(s, "tools"); done(s, "agent"); done(s, "START"); trail(s, "e_ae"); s.active = "END";
+      s.msgs.push({who: "AIMessage", txt: "srv-erp-02 ne répond pas au ping (100 % de perte). Je propose d'ouvrir un ticket pour l'équipe N2-infra. (réponse type : le texte exact dépend du modèle)"});
+      s.term.push({x: "🤖 srv-erp-02 ne répond pas au ping (100 % de perte). Je propose d'ouvrir un ticket pour l'équipe N2-infra."});
+      s.term.push({c: "sys", x: "   (réponse type : le texte exact dépend du modèle)"});
+      s.title = "L'agent répond";
+      s.text = `L'agent lit le résultat du ping et répond à l'utilisateur. L'échec de la tentative 1 n'apparaît nulle part dans la conversation. Le seul indice est la durée : ${fr2(sim.total)} s au lieu de quelques millisecondes.`;
+    });
+  } else {
+    P("pe", s => {
+      pastAll(s); s.toolsFailed = true; s.handlerMark = true; s.attempts = sim.last.fails || 0;
+      done(s, "START"); done(s, "agent"); trail(s, "e_th"); s.active = "handler"; s.running = true;
+      s.term.push({c: "warn", x: `[t=${fr2(sim.total)} s] error_handler · outils_en_echec(state, NodeError(node='tools', error=${lastE.name}(…)))`});
+      s.title = "Le gestionnaire d'erreur prend le relais";
+      s.text = `LangGraph exécute <code>outils_en_echec(state, error)</code>. <code>error.node</code> vaut "tools" et <code>error.error</code> est la dernière exception, une <code>${lastE.name}</code>. Le gestionnaire lit les appels d'outil restés sans réponse dans le dernier message de l'agent : <code>state["messages"][-1].tool_calls</code>.`;
+      hl(s, "hl", ["o1","o2"]);
+      s.dec = decBox("e", "Ce que reçoit le gestionnaire", [`error = NodeError(node="tools",`, `                 error=${lastE.name}("${lastE.msg(sim.last.k)}"))`]);
+    });
+    P("pe", s => {
+      pastAll(s); s.toolsFailed = true; s.handlerMark = true; s.attempts = sim.last.fails || 0;
+      done(s, "START"); done(s, "agent"); s.trail.push("e_th"); trail(s, "e_ha"); s.active = "handler"; s.running = true;
+      s.msgs.push({who: "ToolMessage · status=\"error\"", txt: `supervision indisponible (${lastE.name}) : résultat inconnu`, cls: "err"});
+      s.title = "Command(goto=\"agent\") : le graphe continue";
+      s.text = "Le gestionnaire renvoie un <code>ToolMessage</code> d'erreur pour chaque appel en attente : sans cette réponse, l'historique serait invalide pour le modèle. Puis <code>goto=\"agent\"</code> envoie vers l'agent. Après un gestionnaire, LangGraph ne suit pas les arêtes normales du nœud : avec un simple <code>dict</code> en retour, le graphe s'arrêterait ici.";
+      hl(s, "hl", ["o3","o4","o5"]);
+      s.dec = decBox("", "Ce que renvoie le gestionnaire", ["Command(update={\"messages\": [ToolMessage(…, status=\"error\")]},", "        goto=\"agent\")"]);
+    });
+    P("pd", s => {
+      pastAll(s); s.toolsFailed = true; s.handlerMark = true; s.attempts = sim.last.fails || 0;
+      done(s, "START"); done(s, "agent"); done(s, "handler"); s.trail.push("e_th", "e_ha"); trail(s, "e_ae"); s.active = "END";
+      s.msgs.push({who: "AIMessage", txt: "Je ne peux pas tester srv-erp-02 pour le moment : la supervision est indisponible. (réponse type : le texte exact dépend du modèle)"});
+      s.term.push({x: "🤖 Je ne peux pas tester srv-erp-02 pour le moment : la supervision est indisponible."});
+      s.term.push({c: "sys", x: "   (réponse type : le texte exact dépend du modèle)"});
+      s.title = "L'agent répond sans inventer";
+      s.text = `Le modèle lit « supervision indisponible (${lastE.name}) : résultat inconnu ». Sa consigne système lui interdit d'inventer un résultat : il dit que la supervision est indisponible. L'utilisateur reçoit une réponse au lieu d'une exception. Si le modèle prétendait que le serveur répond, ce serait une hallucination, à mesurer en J4.`;
+    });
+  }
+  P("pd", s => {
+    pastAll(s); if (sim.end !== "ok"){ s.toolsFailed = true; s.handlerMark = true; s.attempts = sim.last.fails || 0; s.trail.push("e_th", "e_ha"); done(s, "handler"); }
+    else { s.trail.push("e_ta"); done(s, "tools"); }
+    s.trail.push("e_sa", "e_at", "e_ae"); ["START","agent","END"].forEach(n => done(s, n));
+    s.termState = "dead";
+    s.term.push({c: "sys", x: `[ainvoke() terminé sans exception · ${sim.att.length} tentative${sim.att.length > 1 ? "s" : ""} de tools]`});
+    s.title = "Bilan";
+    const n = sim.att.length;
+    if (sim.end === "ok") s.text = `${n} tentatives en ${fr2(sim.total)} s, dont ${fr2(sim.waitSum)} s d'attente. La panne passagère est absorbée par la <code>RetryPolicy</code>, sans une ligne de code dans l'outil. Dans Langfuse, le nœud <code>tools</code> apparaît une fois par tentative, la première en erreur. Changez de scénario pour voir le repli.`;
+    else if (sim.end === "epuise") s.text = `${n} tentative${n > 1 ? "s" : ""} ${sim.total > 0 ? "en " + fr2(sim.total) + " s" : "en quelques millisecondes"}, puis le repli. La panne n'a pas fait planter l'agent : le gestionnaire a répondu à la place de l'outil et le graphe a continué. ${c.sc === "deux" ? "Remontez <code>max_attempts</code> à 2 : la tentative suivante aurait réussi." : "Essayez <code>max_attempts</code> à 1 ou à 5 : quand la panne dure, plus de tentatives donnent plus d'attente pour la même conclusion."}`;
+    else s.text = `Une seule tentative${sim.total > 0 ? ", " + fr2(sim.total) + " s" : ", quelques millisecondes"}, puis le repli immédiat. <code>retry_on</code> a évité des essais inutiles. ${sim.last.kind === "timeout" ? "Avec un <code>retry_on</code> qui accepte <code>NodeTimeoutError</code>, la même panne coûterait plusieurs secondes de plus pour la même conclusion." : "Rejouer une <code>ValueError</code> donnerait la même erreur à chaque fois."}`;
+    s.dec = decBox("d", "En chiffres", [`tentatives : ${n} / max_attempts = ${c.max}`, `attentes : ${fr2(sim.waitSum)} s · durée dans tools : ${fr2(sim.total)} s`, `issue : ${sim.end === "ok" ? "succès au retry" : sim.end === "epuise" ? "tentatives épuisées → repli" : "erreur non rejouée → repli"}`]);
+  }, 8000);
+  return {sim, S};
+}
+
+/* ---------- état de lecture ---------- */
+const DEFAULTS = {sc: "deux", max: 3, ro: "conn", jitter: true};
+const ctx = Object.assign({}, DEFAULTS);
+let PLAN = makeSteps(ctx), N = PLAN.S.length - 1;
+let idx = 0, prevIdx = -1, playing = false, timer = null, prevModel = null;
+const seen = new Set([0]);
+
+function build(i){
+  const s = initial();
+  for (let k = 0; k <= i; k++){ resetTransient(s); PLAN.S[k].f(s); }
+  s.choices = i >= 5;
+  return s;
+}
+
+/* ---------- rendu ---------- */
+const PH = {p0: "Préparer", p1: "Tentative", pz: "Attente", pe: "Repli", pd: "Fin"};
+
+function renderTL(s, fresh){
+  const sim = PLAN.sim, pct = x => (x / sim.scale * 100).toFixed(3);
+  let top = "", trk = "", ghost = "", bot = "", ax = "";
+  for (let i = 0; i < s.nAtt; i++){
+    const a = sim.att[i], w = (a.end - a.start) / sim.scale * 100;
+    const fr = fresh && i >= fresh.nAtt ? " fresh" : "";
+    trk += `<div class="blk k-${a.kind}${i === s.curAtt ? " cur" : ""}${fr}" style="left:${pct(a.start)}%;width:max(9px, ${w.toFixed(3)}%)">${a.kind === "timeout" && w > 12 ? "coupée à 1 s" : ""}</div>`;
+    top += `<span class="lab k-${a.kind}" style="left:${pct(a.start)}%">T${a.k}</span>`;
+  }
+  for (let i = 0; i < s.nWait; i++){
+    const wt = sim.att[i].wait;
+    const fr = fresh && i >= fresh.nWait ? " fresh" : "";
+    trk += `<div class="blk wait${i === s.curWait ? " cur" : ""}${fr}" style="left:${pct(wt.start)}%;width:${pct(wt.total)}%"></div>`;
+    const full = ctx.jitter ? `${fr1(wt.base)} + ${fr2(wt.jit)} s` : `${fr2(wt.total)} s`;
+    bot += `<span class="wlab" style="left:${pct(wt.start + wt.total / 2)}%"><span class="full">${full}</span><span class="short">${fr2(wt.total)}</span></span>`;
+  }
+  if (s.ghost){
+    const g = s.ghost;
+    ghost = `<div class="ghost" style="left:${pct(g.start + 1)}%;width:${pct(g.end - g.start - 1)}%"></div><span class="ghost-lab" style="left:${pct(g.start + 1)}%">réponse prévue à ${fr1(g.end)} s, jamais attendue</span>`;
+  }
+  if (s.handlerMark){ trk += `<div class="mark err" style="left:${pct(sim.total)}%"></div>`; bot += `<span class="mlab err" style="left:${pct(sim.total)}%">repli</span>`; }
+  if (s.okMark){ bot += `<span class="mlab ok" style="left:${pct(sim.total) }%;transform:none;padding-left:12px">succès</span>`; }
+  if (s.nAtt) trk += `<div class="now" style="left:${pct(s.t)}%"></div>`;
+  else trk += `<div class="tl-empty">Le nœud tools n'a pas encore démarré.</div>`;
+  const st = sim.scale <= 1.6 ? 0.25 : sim.scale <= 3.5 ? 0.5 : sim.scale <= 8 ? 1 : 2;
+  for (let x = 0; x <= sim.scale + 1e-9; x += st) ax += `<span class="tick" style="left:${pct(x)}%">${fr2(x).replace(/,?0+$/, "") || "0"} s</span>`;
+  $("tl").innerHTML = `<div class="tl-row">${top}</div><div class="tl-track">${trk}</div><div class="tl-ghost">${ghost}</div><div class="tl-row">${bot}</div><div class="tl-axis">${ax}</div>`;
+}
+
+function renderGraph(s){
+  ["START","agent","tools","handler","END"].forEach(n => {
+    const g = $("n-" + n); g.classList.remove("on","done","fail","wait","focus");
+    if (s.active === n) g.classList.add(n === "tools" ? s.activeCls : "on");
+    else if (n === "tools" && s.toolsFailed) g.classList.add("fail");
+    else if (s.doneN.includes(n)) g.classList.add("done");
+    if (s.focus.includes(n)) g.classList.add("focus");
+  });
+  ["e_sa","e_ae","e_at","e_ta","e_th","e_ha"].forEach(e => {
+    const p = $(e); p.classList.remove("on","trail");
+    if (s.edge === e) p.classList.add("on"); else if (s.trail.includes(e)) p.classList.add("trail");
+  });
+  let d = "";
+  for (let i = 0; i < ctx.max; i++) d += `<circle class="adot${s.dots[i] ? " k-" + s.dots[i] : ""}" cx="${256 + i * 20}" cy="187" r="7"/>`;
+  $("adots").innerHTML = d;
+}
+
+function renderPolicy(s){
+  const rows = [
+    ["max_attempts", String(ctx.max), "explicite"],
+    ["initial_interval", "0.2", "explicite"],
+    ["backoff_factor", "2.0", "défaut"],
+    ["max_interval", "128.0", "défaut"],
+    ["jitter", ctx.jitter ? "True" : "False", ctx.jitter ? "défaut" : "explicite"],
+    ["retry_on", RO[ctx.ro].label, ctx.ro === "defaut" ? "défaut" : "explicite"],
+  ];
+  let h = rows.map(([k, v, src]) => `<tr class="${s.polHl.includes(k) ? "hl" : ""}"><td>${k}</td><td>${esc(v)}</td><td class="${src === "explicite" ? "src-x" : ""}">${src}</td></tr>`).join("");
+  h += `<tr class="sep${s.polHl.includes("run_timeout") ? " hl" : ""}"><td>run_timeout</td><td>1</td><td class="src-x">TimeoutPolicy</td></tr>`;
+  $("pol").innerHTML = h;
+  $("counter").innerHTML = `<span>attempts = <b>${s.attempts}</b></span><span>max_attempts = <b>${ctx.max}</b></span>`;
+  let d = "";
+  if (s.dec){
+    d = `<div class="dec ${s.dec.cls}"><h3>${esc(s.dec.h)}</h3>`;
+    if (s.dec.lines) d += s.dec.lines.map(l => `<div class="ln2">${esc(l)}</div>`).join("");
+    if (s.dec.table) d += `<table>${s.dec.table.map(([a, b]) => `<tr><td>${esc(a)}</td><td>${esc(b)}</td></tr>`).join("")}</table>`;
+    d += `</div>`;
+  }
+  $("dec").innerHTML = d;
+}
+
+function renderMsgs(s, fresh){
+  $("msgs").innerHTML = s.msgs.length
+    ? `<ol class="msgs">${s.msgs.map((m, i) => `<li class="${m.cls || ""}${fresh && i >= fresh.msgs ? " fresh" : ""}"><b>${esc(m.who)}</b>${esc(m.txt)}</li>`).join("")}</ol>`
+    : `<div class="empty">L'état est vide : l'agent n'a pas encore reçu la question.</div>`;
+}
+
+function renderCode(s){
+  $("codeUser").innerHTML = codeUser(ctx).map(([id, h]) => `<span class="ln${s.code[id] ? " " + s.code[id] : ""}" data-l="${id}">${h}</span>`).join("");
+  $("codeLoop").querySelectorAll(".ln").forEach(l => { l.className = "ln" + (s.code[l.dataset.l] ? " " + s.code[l.dataset.l] : ""); });
+}
+
+function renderTerm(s, freshFrom){
+  $("term").classList.toggle("idle", s.termState === "idle");
+  const pill = $("pill");
+  pill.className = "pill" + (s.termState === "run" ? " run" : s.termState === "dead" ? " dead" : "");
+  pill.textContent = s.termState === "run" ? "ainvoke() en cours" : s.termState === "dead" ? "terminé" : "pas lancé";
+  let h = s.term.map((l, i) => `<div class="${l.c || ""}${i >= freshFrom ? " fresh" : ""}">${esc(l.x)}</div>`).join("");
+  if (s.termState === "run" && s.running) h += `<div class="spin">   le graphe tourne</div>`;
+  if (!s.term.length) h = `<div class="sys">L'agent n'a encore rien lancé.</div>`;
+  $("tb").innerHTML = h;
+}
+
+function renderChoices(){
+  $("scBtns").querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", b.dataset.sc === ctx.sc));
+  $("roBtns").querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", b.dataset.ro === ctx.ro));
+  $("jiBtns").querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", (b.dataset.ji === "1") === ctx.jitter));
+  $("maxOut").textContent = ctx.max;
+  $("maxMinus").disabled = ctx.max <= 1; $("maxPlus").disabled = ctx.max >= 5;
+}
+
+function renderDots(){
+  $("dots").innerHTML = PLAN.S.map((st, i) => `<button class="dot ${st.ph}" aria-label="Aller à l'étape ${i}" data-i="${i}"></button>`).join("");
+}
+
+function render(){
+  const s = build(idx);
+  const forward = idx === prevIdx + 1;
+  const pm = forward ? prevModel : null;
+  const ph = PLAN.S[idx].ph;
+
+  $("stepno").textContent = `Étape ${idx} / ${N}`;
+  const chip = $("phasechip"); chip.className = "phase-chip " + ph; chip.textContent = PH[ph];
+  $("captitle").textContent = s.title;
+  $("captext").innerHTML = s.text;
+  $("choices").hidden = !s.choices;
+  renderChoices();
+
+  $("clock").textContent = fr2(s.t) + " s";
+  $("clockgap").textContent = s.nAtt ? `tentative ${s.nAtt} / ${ctx.max}` : "pas démarré";
+
+  renderTL(s, pm ? {nAtt: pm.nAtt, nWait: pm.nWait} : null);
+  renderGraph(s);
+  renderPolicy(s);
+  renderMsgs(s, pm ? {msgs: pm.msgs.length} : null);
+  renderCode(s);
+  renderTerm(s, pm ? pm.term.length : 1e9);
+
+  $("bPrev").disabled = idx === 0;
+  $("bNext").disabled = idx === N;
+  $("bPlay").disabled = idx === N;
+  seen.add(idx);
+  $("dots").querySelectorAll(".dot").forEach((d, i) => {
+    d.classList.toggle("cur", i === idx);
+    d.classList.toggle("seen", seen.has(i));
+  });
+  if (idx === N && playing) stop();
+  prevModel = s; prevIdx = idx;
+}
+
+/* ---------- commandes ---------- */
+function go(i){ idx = Math.max(0, Math.min(N, i)); render(); if (playing) schedule(); }
+function schedule(){ clearTimeout(timer); timer = setTimeout(() => { if (idx < N){ idx++; render(); if (playing) schedule(); } }, PLAN.S[idx].dur); }
+function play(){ if (idx === N) return; playing = true; $("bPlay").textContent = "❚❚ Pause"; schedule(); }
+function stop(){ playing = false; clearTimeout(timer); $("bPlay").textContent = "▶ Lecture"; }
+
+/* un choix change la suite : on reconstruit les étapes, on garde la position (bornée) */
+function replan(){
+  PLAN = makeSteps(ctx); N = PLAN.S.length - 1;
+  if (idx > N) idx = N;
+  [...seen].forEach(i => { if (i > N) seen.delete(i); });
+  renderDots(); prevIdx = -2; render();
+  if (playing) schedule();
+}
+
+renderDots();
+$("dots").addEventListener("click", e => { const b = e.target.closest(".dot"); if (b){ stop(); prevIdx = -2; go(+b.dataset.i); } });
+$("bNext").onclick = () => { stop(); go(idx + 1); };
+$("bPrev").onclick = () => { stop(); prevIdx = -2; go(idx - 1); };
+$("bPlay").onclick = () => playing ? stop() : play();
+$("bReset").onclick = () => { stop(); Object.assign(ctx, DEFAULTS); idx = 0; seen.clear(); replan(); };
+$("scBtns").addEventListener("click", e => { const b = e.target.closest("button"); if (b){ ctx.sc = b.dataset.sc; replan(); } });
+$("roBtns").addEventListener("click", e => { const b = e.target.closest("button"); if (b){ ctx.ro = b.dataset.ro; replan(); } });
+$("jiBtns").addEventListener("click", e => { const b = e.target.closest("button"); if (b){ ctx.jitter = b.dataset.ji === "1"; replan(); } });
+$("maxMinus").onclick = () => { if (ctx.max > 1){ ctx.max--; replan(); } };
+$("maxPlus").onclick = () => { if (ctx.max < 5){ ctx.max++; replan(); } };
+document.addEventListener("keydown", e => {
+  if (e.target.matches("input,textarea")) return;
+  if (e.key === "ArrowRight" && idx < N){ e.preventDefault(); stop(); go(idx + 1); }
+  else if (e.key === "ArrowLeft" && idx > 0){ e.preventDefault(); stop(); prevIdx = -2; go(idx - 1); }
+  else if (e.key === " " && !e.target.matches("button")){ e.preventDefault(); playing ? stop() : play(); }
+});
+
+render();
+})();
+</script>
+</body>
+</html>

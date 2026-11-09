@@ -1,0 +1,929 @@
+<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Coordinateur et spécialistes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+[hidden]{display:none !important}
+/* Layout : un lecteur pas à pas. En haut le compteur d'appels LLM et la frise des appels, puis la narration,
+   puis trois vues synchronisées (architecture, fenêtres de contexte, code), la trace Langfuse et la sortie. */
+:root{
+  --bg:#eef1f6; --surface:#ffffff; --surface-2:#e6eaf1; --line:#d2d9e4; --line-strong:#9aa6b8;
+  --fg:#121924; --muted:#576377;
+  --run:#2353cc; --run-soft:#dfe7fb; --on-run:#ffffff;
+  --pause:#a86400; --pause-soft:#fcefd8;
+  --disk:#0b7a68; --disk-soft:#dcf2ed;
+  --human:#b0236a; --human-soft:#f9e1ee;
+  --err:#c42b2b; --err-soft:#fbe3e3;
+  --term-bg:#0d1218; --term-fg:#d9e0ea; --term-muted:#7f8a9b; --term-line:#202a36;
+  --f-display:"IBM Plex Sans Condensed","Arial Narrow",system-ui,sans-serif;
+  --f-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,"Cascadia Mono",Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0c1016; --surface:#141a23; --surface-2:#1b2330; --line:#29323f; --line-strong:#56637a;
+  --fg:#e5eaf2; --muted:#94a1b5;
+  --run:#7aa2ff; --run-soft:#1c2a4a; --on-run:#0b1222;
+  --pause:#f0b03a; --pause-soft:#3a2b10;
+  --disk:#3fc8b0; --disk-soft:#0f2e2a;
+  --human:#f27bb4; --human-soft:#3a1529;
+  --err:#ff7676; --err-soft:#3a1515;
+  --term-bg:#06090d; --term-fg:#d9e0ea; --term-muted:#7f8a9b; --term-line:#1a222d;
+  color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --bg:#0c1016; --surface:#141a23; --surface-2:#1b2330; --line:#29323f; --line-strong:#56637a;
+  --fg:#e5eaf2; --muted:#94a1b5;
+  --run:#7aa2ff; --run-soft:#1c2a4a; --on-run:#0b1222;
+  --pause:#f0b03a; --pause-soft:#3a2b10;
+  --disk:#3fc8b0; --disk-soft:#0f2e2a;
+  --human:#f27bb4; --human-soft:#3a1529;
+  --err:#ff7676; --err-soft:#3a1515;
+  --term-bg:#06090d; --term-fg:#d9e0ea; --term-muted:#7f8a9b; --term-line:#1a222d;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{overflow-x:hidden}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:15px;line-height:1.5}
+.app{max-width:1440px;margin:0 auto;padding:20px 16px 48px;display:flex;flex-direction:column;gap:14px}
+code,.mono{font-family:var(--f-mono);font-size:.9em}
+p code,.cap-text code,.note code,.lesson code{background:var(--surface-2);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+
+/* En-tête */
+.top{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;justify-content:space-between}
+.top h1{font-family:var(--f-display);font-weight:700;font-size:clamp(26px,3.2vw,38px);line-height:1.05;margin:0;text-wrap:balance;letter-spacing:-.01em}
+.top .sub{color:var(--muted);margin:6px 0 0;max-width:78ch}
+.clock{display:flex;align-items:baseline;gap:12px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px 16px}
+.clock .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted)}
+.clock .t{font-family:var(--f-mono);font-size:30px;font-weight:600;font-variant-numeric:tabular-nums}
+.clock .gap{font-family:var(--f-mono);font-size:12.5px;color:var(--muted);min-width:14ch;line-height:1.35}
+
+/* Frise des appels */
+.calls-wrap{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 14px}
+.calls-h{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-bottom:8px}
+.calls-h b{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--fg);font-weight:600}
+.calls{display:flex;flex-wrap:wrap;gap:4px;min-height:34px;align-items:stretch}
+.call{border-radius:6px;padding:4px 8px;font-size:12px;line-height:1.2;border:1px solid transparent;min-width:0}
+.call b{display:block;font-family:var(--f-display);font-size:13px;font-weight:600}
+.call.llm{width:112px}
+.call.tool{width:auto;max-width:170px;font-family:var(--f-mono);font-size:11px;background:var(--surface-2);border-color:var(--line);color:var(--muted);display:flex;align-items:center;overflow-wrap:anywhere}
+.call.coord{background:var(--run-soft);border-color:color-mix(in srgb,var(--run) 40%,transparent)}
+.call.diagnostic{background:var(--pause-soft);border-color:color-mix(in srgb,var(--pause) 45%,transparent)}
+.call.kb{background:var(--disk-soft);border-color:color-mix(in srgb,var(--disk) 45%,transparent)}
+.call.coord b{color:var(--run)} .call.diagnostic b{color:var(--pause)} .call.kb b{color:var(--disk)}
+.call span{color:var(--muted)}
+.calls .none{font-size:12.5px;color:var(--muted);font-style:italic;align-self:center}
+
+/* Narration + commandes */
+.stage{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px;align-items:start;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 20px}
+.cap-step{font-size:12px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.phase-chip{font-weight:600;padding:2px 8px;border-radius:99px;letter-spacing:.05em}
+.phase-chip.p0,.phase-chip.pb{background:var(--surface-2);color:var(--muted)}
+.phase-chip.pc{background:var(--run-soft);color:var(--run)}
+.phase-chip.pd{background:var(--pause-soft);color:var(--pause)}
+.phase-chip.pk{background:var(--disk-soft);color:var(--disk)}
+.phase-chip.px{background:var(--human-soft);color:var(--human)}
+.cap-title{font-family:var(--f-display);font-size:clamp(22px,2.4vw,28px);font-weight:700;margin:4px 0 6px;line-height:1.15;text-wrap:balance}
+.cap-text{font-size:16.5px;max-width:80ch;margin:0}
+.cap-text b{font-weight:600}
+.choices{display:flex;flex-wrap:wrap;gap:14px 22px;margin-top:12px;padding:12px 14px;border:1px dashed var(--human);border-radius:10px;background:var(--human-soft)}
+.choices .grp{display:flex;flex-direction:column;gap:6px;min-width:0}
+.choices .grp>span{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--human);font-weight:600}
+.seg-btns{display:flex;gap:6px;flex-wrap:wrap}
+.seg-btns button{font:inherit;font-size:14px;padding:6px 12px;border-radius:7px;border:1px solid var(--line-strong);background:var(--surface);color:var(--fg);cursor:pointer;text-align:left}
+.seg-btns button small{display:block;font-size:12px;color:var(--muted)}
+.seg-btns button[aria-pressed="true"]{background:var(--human);border-color:var(--human);color:var(--surface)}
+.seg-btns button[aria-pressed="true"] small{color:var(--surface);opacity:.85}
+.controls{display:flex;flex-direction:column;gap:10px;align-items:flex-end}
+.btns{display:flex;gap:6px;flex-wrap:wrap}
+.btn{font:inherit;font-weight:600;font-size:14px;padding:9px 14px;border-radius:8px;border:1px solid var(--line-strong);background:var(--surface);color:var(--fg);cursor:pointer;white-space:nowrap}
+.btn.primary{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.btn:disabled{opacity:.35;cursor:not-allowed}
+.btn:focus-visible,.dot:focus-visible,.seg-btns button:focus-visible,.view-btns button:focus-visible{outline:3px solid var(--run);outline-offset:2px}
+.dots{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;max-width:330px}
+.dot{width:17px;height:17px;border-radius:4px;border:1px solid var(--line-strong);background:var(--surface);cursor:pointer;padding:0}
+.dot.pc{border-color:var(--run)} .dot.pd{border-color:var(--pause)} .dot.pk{border-color:var(--disk)} .dot.px{border-color:var(--human)}
+.dot.seen.pc{background:var(--run-soft)} .dot.seen.pd{background:var(--pause-soft)} .dot.seen.pk{background:var(--disk-soft)} .dot.seen.px{background:var(--human-soft)} .dot.seen.p0,.dot.seen.pb{background:var(--surface-2)}
+.dot.cur{outline:2px solid var(--fg);outline-offset:1px}
+.hint{font-size:12px;color:var(--muted)}
+
+/* Trois vues */
+.views{display:grid;grid-template-columns:minmax(260px,.9fr) minmax(0,1.25fr) minmax(0,1.15fr);gap:14px;align-items:start}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px;min-width:0}
+.panel h2{font-family:var(--f-display);font-size:15px;font-weight:600;margin:0 0 2px;text-transform:uppercase;letter-spacing:.06em}
+.panel .ph{font-size:12.5px;color:var(--muted);margin:0 0 10px}
+
+/* Architecture */
+.svgbox svg{width:100%;max-width:400px;display:block;margin:0 auto}
+.svgbox text{font-family:var(--f-mono);font-size:12.5px;fill:var(--fg)}
+.svgbox .elab{font-size:10px;fill:var(--muted);font-family:var(--f-body)}
+.svgbox .flab{font-family:var(--f-display);font-size:13px;font-weight:600;fill:var(--c)}
+.svgbox .ftool{font-family:var(--f-display);font-size:11.5px;font-weight:600;fill:var(--c)}
+.svgbox .fname{font-size:9.5px;fill:var(--muted);font-family:var(--f-mono)}
+.svgbox .tlab{font-size:9.5px;fill:var(--muted);font-family:var(--f-display)}
+.frame{fill:none;stroke:var(--line);stroke-width:1.4;stroke-dasharray:5 4;transition:fill .3s,stroke .3s}
+.fr.open .frame{stroke:var(--c);stroke-width:2.4;stroke-dasharray:none;fill:var(--cs)}
+.fr.done .frame{stroke:var(--c);stroke-dasharray:none;opacity:.7}
+.fr.unused{opacity:.45}
+.edge{stroke:var(--line-strong);stroke-width:1.7;fill:none;marker-end:url(#arr)}
+.edge.dash{stroke-dasharray:3 4;opacity:.7}
+.edge.trail{stroke:var(--fg);opacity:.45}
+.edge.on{stroke:var(--fg);stroke-width:2.6;opacity:1;stroke-dasharray:7 5;animation:flow .7s linear infinite}
+@keyframes flow{to{stroke-dashoffset:-12}}
+.node rect,.node circle{fill:var(--surface);stroke:var(--line-strong);stroke-width:1.6;transition:fill .3s,stroke .3s}
+.node.done rect,.node.done circle{fill:var(--cs);stroke:var(--c)}
+.node.on rect,.node.on circle{fill:var(--c);stroke:var(--c)}
+.node.on text{fill:var(--surface)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--muted);margin-top:6px;justify-content:center}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:-2px;margin-right:5px;border:1.5px solid}
+.lg-c{background:var(--run-soft);border-color:var(--run)} .lg-d{background:var(--pause-soft);border-color:var(--pause)} .lg-k{background:var(--disk-soft);border-color:var(--disk)} .lg-a{background:var(--human-soft);border-color:var(--human)}
+
+/* Fenêtres de contexte */
+.ctx-h{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}
+.view-btns{display:flex;border:1px solid var(--line-strong);border-radius:8px;overflow:hidden}
+.view-btns button{font:inherit;font-size:13px;padding:5px 10px;border:0;background:var(--surface);color:var(--fg);cursor:pointer}
+.view-btns button+button{border-left:1px solid var(--line-strong)}
+.view-btns button[aria-pressed="true"]{background:var(--fg);color:var(--bg)}
+.win{border:1.5px solid var(--line);border-radius:10px;margin-bottom:10px;overflow:hidden;--c:var(--run);--cs:var(--run-soft)}
+.win.diagnostic{--c:var(--pause);--cs:var(--pause-soft)} .win.kb{--c:var(--disk);--cs:var(--disk-soft)} .win.acces{--c:var(--human);--cs:var(--human-soft)}
+.win.live{border-color:var(--c);box-shadow:0 0 0 3px var(--cs)}
+.win-h{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center;padding:6px 10px;background:var(--cs);font-size:13px}
+.win-h b{font-family:var(--f-mono);font-weight:600;color:var(--c)}
+.win-h .st{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.msgs{list-style:none;margin:0;padding:8px;display:flex;flex-direction:column;gap:5px}
+.msg{display:grid;grid-template-columns:minmax(0,1fr);gap:1px;padding:5px 8px;border-radius:7px;background:var(--surface-2);font-size:13px;border-left:3px solid var(--line-strong);min-width:0}
+.msg .tg{font-family:var(--f-mono);font-size:11px;color:var(--muted);font-weight:600}
+.msg .tx{overflow-wrap:anywhere;white-space:pre-wrap}
+.msg.human{border-left-color:var(--fg)}
+.msg.call{border-left-color:var(--c)} .msg.call .tx{font-family:var(--f-mono);font-size:12px}
+.msg.tool{border-left-color:var(--disk);background:var(--disk-soft)} .msg.tool .tx{font-family:var(--f-mono);font-size:12px}
+.msg.ai{border-left-color:var(--c)}
+.msg.sys{background:transparent;border:1px dashed var(--line-strong);border-left-width:3px;color:var(--muted)}
+.msg.wait{background:transparent;border:1.5px dashed var(--c);color:var(--c);font-size:12.5px}
+.msg.from{outline:1.5px solid var(--human);outline-offset:1px}
+.sendbox{margin:0 8px 8px;border:1.5px solid var(--c);border-radius:7px;padding:6px 9px;font-size:12.5px;background:var(--surface)}
+.sendbox b{color:var(--c)}
+.sendbox ul{margin:3px 0 0;padding-left:18px}
+.blackbox{border:1.5px dashed var(--line-strong);border-radius:10px;padding:10px 12px;margin-bottom:10px;font-size:13px;color:var(--muted);background:repeating-linear-gradient(135deg,var(--surface-2) 0 8px,transparent 8px 14px)}
+.blackbox b{color:var(--fg);font-family:var(--f-mono);font-weight:600}
+.idle-list{font-size:12.5px;color:var(--muted);margin:0}
+.idle-list code{font-size:11.5px}
+
+/* Code */
+.code-h{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:10px 0 4px;font-weight:600;display:flex;justify-content:space-between;gap:8px}
+.code-h:first-of-type{margin-top:0}
+pre.code{margin:0;background:var(--surface-2);border-radius:8px;padding:6px 0;overflow-x:auto;font-family:var(--f-mono);font-size:12px;line-height:1.6}
+pre.code .ln{display:block;padding:0 12px;white-space:pre;border-left:3px solid transparent;transition:background .25s}
+pre.code .ln.hl{background:var(--run-soft);border-left-color:var(--run)}
+pre.code .ln.hlp{background:var(--pause-soft);border-left-color:var(--pause)}
+pre.code .ln.hlk{background:var(--disk-soft);border-left-color:var(--disk)}
+pre.code .ln.hlh{background:var(--human-soft);border-left-color:var(--human)}
+.k{color:var(--human)} .s{color:var(--disk)} .f{color:var(--run)} .c{color:var(--muted);font-style:italic}
+.note{margin-top:8px;border-radius:8px;padding:8px 11px;font-size:13.5px;border:1.5px solid var(--run);background:var(--run-soft)}
+.note.p{border-color:var(--pause);background:var(--pause-soft)}
+.note.k{border-color:var(--disk);background:var(--disk-soft)}
+.note.h{border-color:var(--human);background:var(--human-soft)}
+.note pre{margin:6px 0 0;font-family:var(--f-mono);font-size:11.5px;overflow-x:auto;white-space:pre;background:var(--surface);border-radius:6px;padding:6px 8px}
+
+/* Terminaux */
+.terms{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.term{background:var(--term-bg);color:var(--term-fg);border-radius:12px;overflow:hidden;border:1px solid var(--term-line);min-width:0;display:flex;flex-direction:column}
+.term-h{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 14px;border-bottom:1px solid var(--term-line);font-size:13px}
+.term-h .who{font-weight:600}
+.term-h .who small{font-weight:400;color:var(--term-muted)}
+.pill{font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:99px;text-transform:uppercase;letter-spacing:.05em;background:#222b37;color:var(--term-muted)}
+.pill.run{background:#173a2f;color:#5fe0b5}
+.term-b{padding:10px 14px 14px;font-family:var(--f-mono);font-size:12.4px;line-height:1.6;min-height:170px;overflow-x:auto}
+.term-b div{white-space:pre-wrap;overflow-wrap:anywhere}
+.term-b .cmd{color:#9cc2ff}
+.term-b .sys{color:var(--term-muted);font-style:italic}
+.term-b .good{color:#78e2bd}
+.term-b .spin{color:var(--term-muted)}
+.term-b .spin::after{content:"";display:inline-block;width:1ch;animation:dots 1.2s steps(4) infinite}
+@keyframes dots{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
+.tr{display:flex;gap:6px;align-items:baseline}
+.tr i{font-style:normal;color:var(--term-muted)}
+.tr.coord b{color:#9cc2ff} .tr.diagnostic b{color:#ffc561} .tr.kb b{color:#78e2bd}
+.tr b{font-weight:600}
+.fresh{animation:fresh .45s ease both}
+@keyframes fresh{from{opacity:0;transform:translateY(5px)}}
+
+/* À retenir */
+.lessons{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+.lesson{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px;min-width:0}
+.lesson .n{font-family:var(--f-display);font-weight:700;font-size:13px;color:var(--muted);letter-spacing:.06em}
+.lesson h3{font-family:var(--f-display);font-size:18px;margin:2px 0 6px;line-height:1.2}
+.lesson p{margin:0;font-size:14px;color:var(--muted)}
+.lesson p code{color:var(--fg)}
+.sect-h{font-family:var(--f-display);font-size:20px;font-weight:700;margin:10px 0 0}
+
+@media (max-width:1180px){
+  .views{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  .views .panel.code-p{grid-column:1 / -1}
+  .lessons{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:760px){
+  .stage{grid-template-columns:1fr;padding:14px}
+  .controls{align-items:stretch}
+  .dots{justify-content:flex-start;max-width:none}
+  .views,.terms,.lessons{grid-template-columns:1fr}
+  .clock .t{font-size:24px}
+  .call.llm{width:96px}
+}
+@media (prefers-reduced-motion:reduce){
+  *{animation:none !important;transition:none !important}
+}
+</style>
+</head>
+<body>
+
+<div class="app">
+  <header class="top">
+    <div>
+      <h1>Coordinateur et spécialistes, pas à pas</h1>
+      <p class="sub">Un coordinateur dont les outils sont des agents. Chaque agent a sa propre fenêtre de contexte. Le code est celui de <code>construction/etape_07_rag_specialistes_mcp.py</code> (le même que dans <code>J3_02</code> §7). La sortie est celle de la cellule du J3-02, avec la demande choisie.</p>
+    </div>
+    <div class="clock" aria-label="Compteur d'appels LLM">
+      <span class="lbl">Appels LLM</span>
+      <span class="t" id="ncalls">0</span>
+      <span class="gap" id="ncallsd"></span>
+    </div>
+  </header>
+
+  <section class="calls-wrap" aria-label="Frise des appels">
+    <div class="calls-h"><b>Frise des appels, dans l'ordre</b><span>Un bloc large = un appel LLM, un bloc gris = un outil Python. Longueurs identiques : les durées ne sont pas mesurées appel par appel.</span></div>
+    <div class="calls" id="calls"></div>
+  </section>
+
+  <section class="stage" aria-live="polite">
+    <div>
+      <div class="cap-step"><span id="stepno">Étape 0 / 16</span><span class="phase-chip p0" id="phasechip">Avant</span></div>
+      <h2 class="cap-title" id="captitle"></h2>
+      <p class="cap-text" id="captext"></p>
+      <div class="choices" id="choices" hidden>
+        <div class="grp">
+          <span>La demande envoyée au coordinateur</span>
+          <div class="seg-btns" id="reqBtns">
+            <button type="button" data-req="un">Un sujet<small>Outlook plante…</small></button>
+            <button type="button" data-req="deux">Deux sujets<small>srv-erp-02 et le VPN</small></button>
+            <button type="button" data-req="seul">Rien à déléguer<small>Merci, c'est réglé</small></button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="controls">
+      <div class="btns">
+        <button class="btn" id="bReset" title="Recommencer">⟲</button>
+        <button class="btn" id="bPrev">◀ Précédent</button>
+        <button class="btn primary" id="bPlay">▶ Lecture</button>
+        <button class="btn" id="bNext">Suivant ▶</button>
+      </div>
+      <div class="dots" id="dots"></div>
+      <div class="hint">Clavier : ← → pour avancer, espace pour lecture/pause</div>
+    </div>
+  </section>
+
+  <div class="views">
+    <section class="panel">
+      <h2 id="archTitle">L'architecture</h2>
+      <p class="ph" id="archSub">Quatre <code>create_agent</code>, chacun avec sa boucle model ⇄ tools.</p>
+      <div class="svgbox" id="svgAgents">
+        <svg viewBox="0 0 380 392" role="img" aria-label="Le coordinateur et ses trois spécialistes : kb, diagnostic, acces">
+          <defs>
+            <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" style="fill:var(--line-strong)"/></marker>
+          </defs>
+          <g class="fr" id="f-coord" style="--c:var(--run);--cs:var(--run-soft)">
+            <rect class="frame" x="8" y="6" width="364" height="116" rx="12"/>
+            <text class="flab" x="22" y="28">coordinateur</text>
+            <text class="fname" x="358" y="28" text-anchor="end">PROMPT_COORDINATEUR</text>
+            <path class="edge" id="e-cmt" d="M160 60 L218 60"/>
+            <path class="edge" id="e-ctm" d="M220 82 L162 82"/>
+            <g class="node" id="n-cm"><rect x="50" y="48" width="110" height="44" rx="8"/><text x="105" y="75" text-anchor="middle">model</text></g>
+            <g class="node" id="n-ct"><rect x="220" y="48" width="110" height="44" rx="8"/><text x="275" y="75" text-anchor="middle">tools</text></g>
+            <text class="tlab" x="190" y="112" text-anchor="middle">outils : demander_kb · demander_diagnostic · demander_acces</text>
+          </g>
+          <path class="edge" id="e-kb" d="M262 94 C 235 150, 80 150, 65 186"/>
+          <path class="edge" id="e-diagnostic" d="M275 94 C 268 150, 195 150, 190 186"/>
+          <path class="edge" id="e-acces" d="M290 94 C 300 150, 315 150, 315 186"/>
+          <g id="specFrames"></g>
+        </svg>
+        <div class="legend"><span><i class="lg-c"></i>coordinateur</span><span><i class="lg-k"></i>KB</span><span><i class="lg-d"></i>Diagnostic</span><span><i class="lg-a"></i>Accès</span></div>
+      </div>
+      <div class="svgbox" id="svgHandoff" hidden>
+        <svg viewBox="0 0 380 360" role="img" aria-label="Graphe handoff : START, accueil, comptes, END">
+          <defs>
+            <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" style="fill:var(--line-strong)"/></marker>
+          </defs>
+          <g style="--c:var(--human);--cs:var(--human-soft)">
+            <path class="edge trail" d="M190 40 L190 76" style="marker-end:url(#arr2)"/>
+            <path class="edge on" d="M190 122 L190 196" style="marker-end:url(#arr2)"/>
+            <path class="edge trail" d="M190 242 L190 300" style="marker-end:url(#arr2)"/>
+            <path class="edge dash" d="M252 100 C 330 130, 330 280, 204 312" style="marker-end:url(#arr2)"/>
+            <text class="elab" x="198" y="156">Command(goto="comptes")</text>
+            <text class="elab" x="296" y="210">sinon : END</text>
+            <g class="node done"><circle cx="190" cy="28" r="10"/></g><text class="elab" x="208" y="32">START</text>
+            <g class="node done"><rect x="128" y="78" width="124" height="44" rx="8"/><text x="190" y="105" text-anchor="middle">accueil</text></g>
+            <g class="node on"><rect x="128" y="198" width="124" height="44" rx="8"/><text x="190" y="225" text-anchor="middle">comptes</text></g>
+            <g class="node"><circle cx="190" cy="314" r="12"/></g><text class="elab" x="210" y="318">END</text>
+          </g>
+        </svg>
+        <div class="legend"><span>Un seul graphe, un seul état <code>MessagesState</code>, partagé par les deux nœuds.</span></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="ctx-h">
+        <div>
+          <h2>Les fenêtres de contexte</h2>
+          <p class="ph" id="ctxSub">Le <code>state["messages"]</code> de chaque agent. Les textes des modèles sont illustratifs. Les sorties des outils suivent le code (extraits abrégés).</p>
+        </div>
+        <div class="view-btns" role="group" aria-label="Choix de la vue">
+          <button type="button" id="vCoord" aria-pressed="false">Vue coordinateur</button>
+          <button type="button" id="vIn" aria-pressed="true">Vue interne</button>
+        </div>
+      </div>
+      <div id="ctx"></div>
+    </section>
+
+    <section class="panel code-p">
+      <h2>Le code</h2>
+      <p class="ph">Extraits de <code>etape_07_rag_specialistes_mcp.py</code>. La ligne surlignée est celle qui travaille.</p>
+      <div class="code-h"><span>Les spécialistes (l. 145)</span></div>
+      <pre class="code" id="codeSpec"></pre>
+      <div class="code-h"><span>Un spécialiste devient un outil (l. 155)</span></div>
+      <pre class="code" id="codeTool"></pre>
+      <div class="code-h"><span>Le coordinateur (l. 169)</span></div>
+      <pre class="code" id="codeCoord"></pre>
+      <div id="note"></div>
+    </section>
+  </div>
+
+  <div class="terms">
+    <section class="term">
+      <div class="term-h"><span class="who">Trace Langfuse <small>simplifiée, session j3-02-coordinateur</small></span><span class="pill" id="pillT">vide</span></div>
+      <div class="term-b" id="tbTrace"></div>
+    </section>
+    <section class="term">
+      <div class="term-h"><span class="who" id="outTitle">Sortie de la cellule <small>J3-02 §7</small></span><span class="pill" id="pillO">pas lancée</span></div>
+      <div class="term-b" id="tbOut"></div>
+    </section>
+  </div>
+
+  <h2 class="sect-h">Ce qu'il faut retenir</h2>
+  <div class="lessons">
+    <article class="lesson"><div class="n">1 · L'OUTIL</div><h3>Vu du coordinateur, un spécialiste est un outil</h3><p>Le modèle voit un nom (<code>demander_kb</code>), une description et un paramètre <code>consigne</code>. La description de l'outil décide du routage.</p></article>
+    <article class="lesson"><div class="n">2 · LE CONTEXTE</div><h3>Chaque agent a sa fenêtre</h3><p>Le spécialiste démarre avec un seul message, <code>HumanMessage(consigne)</code>. Il ne voit ni la conversation, ni le nom de la personne, ni le travail des autres spécialistes.</p></article>
+    <article class="lesson"><div class="n">3 · LA REMONTÉE</div><h3>Seule la réponse finale remonte</h3><p><code>resultat["messages"][-1].content</code> devient le <code>ToolMessage</code> du coordinateur. Les étapes internes ne lui parviennent pas. Langfuse les garde, grâce au <code>config</code> transmis.</p></article>
+    <article class="lesson"><div class="n">4 · LE COÛT</div><h3>Chaque délégation ajoute au moins deux appels LLM</h3><p>6 ou 7 appels pour deux sujets. Mesuré sur CPU (J3-01) : 4 à 8 min, contre 20 à 90 s avec un routeur. Le multi-agents doit se justifier, sinon c'est de la sur-ingénierie.</p></article>
+  </div>
+</div>
+
+<script>
+(function(){
+"use strict";
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+/* ---------- les données du dépôt ---------- */
+const PROMPT_COORDINATEUR = "Tu es le coordinateur du help-desk N1 de NordTech SA. Tu ne réponds jamais de mémoire : tu délègues à tes spécialistes (un appel par sujet, avec une consigne précise), puis tu rédiges une réponse finale…";
+const SPEC = {
+  kb: {short:"KB", agent:"specialiste_kb", tool:"demander_kb", phase:"pk", cls:"hlk",
+       prompt:"CONSIGNES[\"kb\"] : Tu es le spécialiste Procédures du help-desk NordTech. Utilise rechercher_procedures, puis réponds en 3 phrases maximum EN CITANT les références [KB-xxx]…",
+       tools:["rechercher_procedures"], line:"s2"},
+  diagnostic: {short:"Diagnostic", agent:"specialiste_diagnostic", tool:"demander_diagnostic", phase:"pd", cls:"hlp",
+       prompt:"CONSIGNES[\"diagnostic\"] : Tu es le spécialiste Diagnostic du help-desk NordTech. Utilise tes outils pour établir les FAITS (état, joignabilité, historique)…",
+       tools:["statut_serveur","ping_serveur","+ 3 outils MCP"], line:"s3"},
+  acces: {short:"Accès", agent:"specialiste_acces", tool:"demander_acces", phase:"px", cls:"hlh",
+       prompt:"CONSIGNE_ACCES", tools:["etat_compte","rechercher_procedures"], line:"s4"},
+};
+const COLORS = {kb:["--disk","--disk-soft"], diagnostic:["--pause","--pause-soft"], acces:["--human","--human-soft"]};
+const DELEG = {
+  diag_erp: {spec:"diagnostic", consigne:"Vérifier si le serveur srv-erp-02 répond au ping.",
+    call:'ping_serveur(hote="srv-erp-02")', toolName:"ping_serveur",
+    out:"srv-erp-02 : aucune réponse au ping (100 % de perte)",
+    final:"srv-erp-02 ne répond pas au ping : 100 % de perte depuis la supervision. Le serveur est injoignable."},
+  kb_vpn: {spec:"kb", consigne:"Donner la procédure pour configurer le VPN depuis un hôtel.",
+    call:'rechercher_procedures(question="configurer le VPN depuis un hôtel")', toolName:"rechercher_procedures",
+    out:"[KB-001] Configurer le client VPN NordTech Connect\n1. Installer NordTech Connect depuis le Centre logiciel (catégorie Réseau). …\n\n(jusqu'à 3 extraits, un par article)",
+    final:"Installez NordTech Connect depuis le Centre logiciel, serveur vpn.nordtech.example, puis validez la notification MFA [KB-001]. En cas d'erreur 809, le réseau de l'hôtel bloque peut-être le port UDP 4500 : essayez un partage de connexion mobile [KB-001]."},
+  kb_outlook: {spec:"kb", consigne:"Trouver la procédure quand Outlook plante en ouvrant une pièce jointe.",
+    call:'rechercher_procedures(question="Outlook plante en ouvrant une pièce jointe")', toolName:"rechercher_procedures",
+    out:"[KB-004] Outlook plante à l'ouverture d'une pièce jointe\n1. Fermer Outlook.\n2. Le relancer en mode sans échec : touche Windows + R, puis outlook.exe /safe. …\n\n(jusqu'à 3 extraits, un par article)",
+    final:"Fermez Outlook, relancez-le en mode sans échec (outlook.exe /safe), puis désactivez les compléments COM [KB-004]. Si le problème persiste, enregistrez la pièce jointe sur le bureau et ouvrez-la depuis l'Explorateur [KB-004]."},
+};
+const REQ = {
+  un:   {q:"Outlook plante dès que j'ouvre une pièce jointe", dels:["kb_outlook"],
+         final:"Relancez Outlook en mode sans échec (outlook.exe /safe) et désactivez les compléments COM [KB-004]. Si le problème persiste, enregistrez la pièce jointe sur le bureau et ouvrez-la depuis l'Explorateur [KB-004]."},
+  deux: {q:"Bonjour, ici Julie Martin. srv-erp-02 répond-il au ping ? Et comment je configure le VPN depuis l'hôtel ?", dels:["diag_erp","kb_vpn"],
+         final:"srv-erp-02 ne répond pas au ping (100 % de perte) : le serveur est injoignable. Pour le VPN depuis l'hôtel, installez NordTech Connect depuis le Centre logiciel et validez la notification MFA [KB-001]. En cas d'erreur 809, essayez un partage de connexion mobile [KB-001]."},
+  seul: {q:"Merci, c'est réglé de mon côté. Bonne journée !", dels:[],
+         final:"Avec plaisir, bonne journée !"},
+};
+
+/* ---------- le code affiché ---------- */
+const CODE_SPEC = [
+  ["s1", 'SPECIALISTES = {'],
+  ["s2", '    <span class="s">"kb"</span>: <span class="f">create_agent</span>(llm, [rechercher_procedures], system_prompt=CONSIGNES[<span class="s">"kb"</span>], name=<span class="s">"specialiste_kb"</span>),'],
+  ["s3", '    <span class="s">"diagnostic"</span>: <span class="f">create_agent</span>(llm, [statut_serveur, ping_serveur, *OUTILS_MCP], system_prompt=CONSIGNES[<span class="s">"diagnostic"</span>], …),'],
+  ["s4", '    <span class="s">"acces"</span>: <span class="f">create_agent</span>(llm, [etat_compte, rechercher_procedures], system_prompt=CONSIGNE_ACCES, …),'],
+  ["s5", '}'],
+];
+const CODE_TOOL = [
+  ["t1", '<span class="k">def</span> <span class="f">comme_outil</span>(nom: str, specialiste, description: str) -> BaseTool:'],
+  ["t2", '    <span class="k">async def</span> <span class="f">deleguer</span>(consigne: str, config: RunnableConfig) -> str:'],
+  ["t3", '        resultat = <span class="k">await</span> specialiste.<span class="f">ainvoke</span>({<span class="s">"messages"</span>: [<span class="f">HumanMessage</span>(consigne)]},'],
+  ["t4", '                                             config={**config, <span class="s">"run_name"</span>: <span class="s">f"specialiste-{nom}"</span>})   <span class="c"># traces imbriquées</span>'],
+  ["t5", '        <span class="k">return</span> resultat[<span class="s">"messages"</span>][-1].content'],
+  ["t6", '    deleguer.__doc__ = <span class="s">f"""{description}  …  Args: consigne: la tâche précise confiée au spécialiste …"""</span>'],
+  ["t7", '    <span class="k">return</span> <span class="f">tool</span>(<span class="s">f"demander_{nom}"</span>, parse_docstring=<span class="k">True</span>)(deleguer)'],
+];
+const CODE_COORD = [
+  ["c1", 'coordinateur = <span class="f">create_agent</span>(llm, [<span class="f">comme_outil</span>(n, s, DESCRIPTIONS_SPECIALISTES[n]) <span class="k">for</span> n, s <span class="k">in</span> SPECIALISTES.items()],'],
+  ["c2", '                            system_prompt=PROMPT_COORDINATEUR, name=<span class="s">"coordinateur"</span>)'],
+];
+const fillCode = (el, rows) => { $(el).innerHTML = rows.map(([id,h]) => `<span class="ln" data-l="${id}">${h}</span>`).join(""); };
+fillCode("codeSpec", CODE_SPEC); fillCode("codeTool", CODE_TOOL); fillCode("codeCoord", CODE_COORD);
+
+/* ---------- les cadres des spécialistes dans le SVG ---------- */
+(function drawFrames(){
+  const xs = {kb:8, diagnostic:133, acces:258};
+  let h = "";
+  for (const [k, x] of Object.entries(xs)){
+    const [c, cs] = COLORS[k], sp = SPEC[k], cx = x + 57;
+    h += `<g class="fr" id="f-${k}" style="--c:var(${c});--cs:var(${cs})">
+      <rect class="frame" x="${x}" y="188" width="114" height="198" rx="10"/>
+      <text class="ftool" x="${cx}" y="206" text-anchor="middle">${sp.tool}</text>
+      <text class="fname" x="${cx}" y="220" text-anchor="middle">${sp.agent}</text>
+      <path class="edge" id="e-${k}-mt" d="M${x+45} 264 L${x+45} 290"/>
+      <path class="edge" id="e-${k}-tm" d="M${x+69} 292 L${x+69} 266"/>
+      <g class="node" id="n-${k}-m"><rect x="${x+15}" y="230" width="84" height="34" rx="7"/><text x="${cx}" y="252" text-anchor="middle">model</text></g>
+      <g class="node" id="n-${k}-t"><rect x="${x+15}" y="292" width="84" height="34" rx="7"/><text x="${cx}" y="314" text-anchor="middle">tools</text></g>
+      ${sp.tools.map((t, i) => `<text class="tlab" x="${cx}" y="${345 + i*13}" text-anchor="middle">${t}</text>`).join("")}
+    </g>`;
+  }
+  $("specFrames").innerHTML = h;
+})();
+const NODES = ["n-cm","n-ct","n-kb-m","n-kb-t","n-diagnostic-m","n-diagnostic-t","n-acces-m","n-acces-t"];
+const EDGES = ["e-cmt","e-ctm","e-kb","e-diagnostic","e-acces","e-kb-mt","e-kb-tm","e-diagnostic-mt","e-diagnostic-tm","e-acces-mt","e-acces-tm"];
+
+/* ---------- le modèle ---------- */
+function initial(){
+  return {
+    coord: [], specs: {kb:{st:"idle", msgs:[]}, diagnostic:{st:"idle", msgs:[]}, acces:{st:"idle", msgs:[]}},
+    calls: [], trace: [], out: [], doneN: [], trail: [], nC: 0, nS: 0, ended: false,
+  };
+}
+function resetTransient(s){
+  s.active = null; s.edge = null; s.code = []; s.codeCls = "hl"; s.note = null; s.choices = false;
+  s.running = null; s.waitFor = null; s.outRun = false; s.mode = "agents"; s.send = null; s.title = ""; s.text = "";
+  s.hiFrom = false;
+}
+const visit = (s, node, edge) => {
+  if (s.active && !s.doneN.includes(s.active)) s.doneN.push(s.active);
+  s.active = node; s.edge = edge || null;
+  if (edge && !s.trail.includes(edge)) s.trail.push(edge);
+};
+const llm = (s, who, label) => {
+  if (who === "coord") s.nC++; else s.nS++;
+  s.calls.push({k:"llm", who, x:label});
+};
+const toolRun = (s, who, label) => s.calls.push({k:"tool", who, x:label});
+const tr = (s, d, who, x) => s.trace.push({d, who, x});
+
+/* ---------- les étapes ---------- */
+function stAvant(s){
+  s.phase = "p0";
+  s.code = ["s1","s2","s3","s4","s5","c1","c2"];
+  s.note = {cls:"", h:"Dans le notebook J3-02, le troisième spécialiste est Ticketing (<code>demander_ticketing</code>). Dans <code>etape_07</code>, c'est Accès. Le mécanisme est le même."};
+  s.title = "Trois spécialistes, trois outils";
+  s.text = "Chaque spécialiste est un <code>create_agent</code> complet, avec SES outils et SA consigne. Le coordinateur est lui aussi un <code>create_agent</code>. Ses seuls outils sont <code>demander_kb</code>, <code>demander_diagnostic</code> et <code>demander_acces</code>. Chacun des quatre agents aura sa propre liste de messages.";
+}
+function stDemande(s, c){
+  s.phase = "pc";
+  s.coord.push({t:"human", x:REQ[c.req].q});
+  s.out.push({c:"cmd", x:`QUESTION = "${REQ[c.req].q}"`});
+  s.out.push({c:"cmd", x:'etat = await coordinateur.ainvoke({"messages": [("user", QUESTION)]}, config={…})'});
+  s.outRun = true; s.choices = true;
+  tr(s, 0, "coord", "coordinateur");
+  s.code = ["c1","c2"];
+  s.title = "La demande arrive";
+  s.text = "Choisissez la demande ci-dessous. Le coordinateur reçoit <code>{\"messages\": [(\"user\", QUESTION)]}</code> : sa fenêtre contient un seul message. Les spécialistes sont construits, mais aucun n'a d'état : il naît au moment de l'appel.";
+}
+function stLit(s, c){
+  s.phase = "pc";
+  visit(s, "n-cm", null);
+  llm(s, "coord", "appel 1");
+  tr(s, 1, "coord", "génération (appel LLM 1)");
+  s.send = {who:"coord", items:["SystemMessage(PROMPT_COORDINATEUR), ajouté à chaque appel", "l'historique : 1 message", "3 outils : nom, description, paramètre consigne"]};
+  s.code = ["c1","c2","t6","t7"];
+  s.note = {cls:"", h:"Le paramètre <code>config: RunnableConfig</code> n'apparaît pas dans le schéma envoyé au modèle. <code>langchain_core</code> le retire du schéma de l'outil et l'injecte à l'exécution. Le modèle ne voit que <code>consigne</code>."};
+  s.title = "Le coordinateur lit et décide";
+  s.text = "Premier appel LLM. Le modèle reçoit le prompt système, l'historique et la description de chaque outil <code>demander_…</code>. C'est cette description qui lui fait choisir un spécialiste. Il ne connaît rien d'autre des spécialistes : ni leurs outils, ni leur consigne.";
+}
+function stDirect(s, c){
+  s.phase = "pc";
+  visit(s, "n-cm", null);
+  s.coord.push({t:"ai", x:REQ.seul.final});
+  s.ended = true;
+  s.out.push({x:"⏱ … s"});
+  s.out.push({x:""});
+  s.out.push({c:"good", x:"🤖 " + REQ.seul.final});
+  s.code = ["c1","c2"];
+  s.note = {cls:"", h:"Dans <code>langchain/agents/factory.py</code>, la boucle s'arrête quand le dernier <code>AIMessage</code> n'a aucun <code>tool_call</code>. Et par défaut, <code>tool_choice</code> n'est pas imposé : rien n'oblige le modèle à appeler un outil."};
+  s.title = "Rien à déléguer : une réponse directe";
+  s.text = "Supposons que le modèle juge qu'il n'y a rien à déléguer : il répond sans <code>tool_call</code>. <code>create_agent</code> sort aussitôt de sa boucle : un seul appel LLM, aucune fenêtre de spécialiste ouverte. Le choix revient au modèle.";
+}
+
+/* Une délégation complète (6 étapes) ou compacte (4 étapes) */
+function delegation(key, n, compact, req){
+  const d = DELEG[key], k = d.spec, sp = SPEC[k];
+  const steps = [];
+  /* 1. le tool_call du coordinateur */
+  steps.push((s) => {
+    s.phase = "pc";
+    if (n > 1){ llm(s, "coord", "appel " + n); tr(s, 1, "coord", `génération (appel LLM ${n})`); }
+    visit(s, "n-cm", "e-cmt");
+    s.coord.push({t:"call", x:`${sp.tool}(consigne="${d.consigne}")`});
+    s.code = ["t7"];
+    if (n === 1){
+      s.title = "Il délègue : un tool_call avec une consigne";
+      s.text = req === "deux"
+        ? "La réponse du modèle est un <code>AIMessage</code> qui porte un <code>tool_call</code> : <code>demander_diagnostic</code>, avec une consigne qu'il a rédigée lui-même. « Julie Martin » n'y figure pas (constaté dans le J3-02). Cette consigne est tout ce que le spécialiste saura."
+        : "La réponse du modèle est un <code>AIMessage</code> qui porte un <code>tool_call</code> : <code>demander_kb</code>, avec une consigne qu'il a rédigée lui-même. Cette consigne est tout ce que le spécialiste saura de la demande.";
+    } else {
+      s.title = "Appel LLM n° " + n + " : le sujet suivant";
+      s.text = "Le coordinateur relance son modèle. Celui-ci relit tout l'historique du coordinateur, ToolMessage du Diagnostic compris. Il passe au deuxième sujet et appelle <code>demander_kb</code> avec une nouvelle consigne. Un appel par sujet : c'est ce que demande <code>PROMPT_COORDINATEUR</code>.";
+    }
+  });
+  /* 2. la fenêtre du spécialiste s'ouvre */
+  const open = (s) => {
+    s.phase = sp.phase;
+    visit(s, "n-ct", "e-" + k);
+    s.specs[k].st = "run"; s.specs[k].msgs.push({t:"human", x:d.consigne, from:true});
+    s.running = k; s.waitFor = sp.tool;
+    toolRun(s, k, sp.tool);
+    tr(s, 1, "coord", "outil " + sp.tool); tr(s, 2, k, "specialiste-" + k);
+    s.code = ["t2","t3","t4"]; s.codeCls = sp.cls; s.hiFrom = true;
+  };
+  const innerCall = (s) => {
+    llm(s, k, "appel 1");
+    s.specs[k].msgs.push({t:"call", x:d.call});
+    tr(s, 3, k, "génération (appel LLM 1)");
+    s.send = {who:k, items:[`SystemMessage(${sp.prompt.split(" :")[0]}), ajouté à chaque appel`, "l'historique : 1 message, la consigne", "ses outils : " + sp.tools.join(", ")]};
+  };
+  const innerTool = (s) => {
+    toolRun(s, k, d.toolName);
+    s.specs[k].msgs.push({t:"tool", x:d.out, name:d.toolName});
+    tr(s, 3, k, "outil " + d.toolName);
+  };
+  const innerFinal = (s) => {
+    llm(s, k, "appel 2");
+    s.specs[k].msgs.push({t:"ai", x:d.final});
+    tr(s, 3, k, "génération (appel LLM 2)");
+  };
+  if (!compact){
+    steps.push((s) => {
+      open(s);
+      s.title = "Le spécialiste démarre avec une fenêtre vide";
+      s.text = `<code>deleguer()</code> appelle <code>specialiste.ainvoke({"messages": [HumanMessage(consigne)]})</code>. Le spécialiste ${sp.short} reçoit un seul message : la consigne. Pas la demande d'origine, pas le nom de la personne. Le coordinateur, lui, attend le résultat de son outil.`;
+    });
+    steps.push((s) => {
+      s.phase = sp.phase; s.running = k; s.waitFor = sp.tool;
+      visit(s, `n-${k}-m`, null);
+      innerCall(s);
+      s.code = [sp.line]; s.codeCls = sp.cls;
+      s.title = "Sa propre boucle, avec SES outils";
+      s.text = k === "diagnostic"
+        ? "Le spécialiste appelle son modèle avec SA consigne système et SES outils. Il demande <code>ping_serveur</code>. Le coordinateur ne pourrait pas faire cet appel : <code>ping_serveur</code> n'est pas dans sa liste d'outils (moindre privilège, OWASP ASI02)."
+        : "Le spécialiste appelle son modèle avec SA consigne système et SON outil. Il demande <code>rechercher_procedures</code>, avec une question qu'il formule lui-même. Le coordinateur n'a pas cet outil : il ne peut pas interroger Qdrant.";
+    });
+    steps.push((s) => {
+      s.phase = sp.phase; s.running = k; s.waitFor = sp.tool;
+      visit(s, `n-${k}-t`, `e-${k}-mt`);
+      innerTool(s);
+      s.code = [sp.line]; s.codeCls = sp.cls;
+      s.title = "L'outil répond dans la fenêtre du spécialiste";
+      s.text = k === "diagnostic"
+        ? "<code>ping_serveur</code> renvoie « srv-erp-02 : aucune réponse au ping (100 % de perte) ». Ce ToolMessage s'ajoute à l'historique du spécialiste. Celui du coordinateur n'a pas bougé : il attend toujours."
+        : "<code>rechercher_procedures</code> fait une recherche hybride dans Qdrant, limitée aux articles publics. Elle renvoie jusqu'à 3 extraits, chacun préfixé de sa référence, ici <code>[KB-004]</code>. Ce ToolMessage reste dans la fenêtre du spécialiste.";
+    });
+    steps.push((s) => {
+      s.phase = sp.phase; s.running = k; s.waitFor = sp.tool;
+      visit(s, `n-${k}-m`, `e-${k}-tm`);
+      innerFinal(s);
+      s.code = [sp.line]; s.codeCls = sp.cls;
+      s.note = {cls: k === "kb" ? "k" : "p", h:"Condition de sortie de la boucle, dans <code>langchain/agents/factory.py</code> : si le dernier <code>AIMessage</code> n'a aucun <code>tool_call</code>, le graphe va à la fin. <code>ainvoke</code> renvoie alors l'état complet du spécialiste."};
+      s.title = "Réponse finale du spécialiste";
+      s.text = `Deuxième appel LLM du spécialiste. Sa réponse ne contient plus de <code>tool_call</code> : sa boucle s'arrête. Son état compte maintenant 4 messages. ${k === "kb" ? "La réponse cite <code>[KB-004]</code>." : ""}`;
+    });
+  } else {
+    steps.push((s) => {
+      open(s);
+      visit(s, `n-${k}-m`, null);
+      innerCall(s);
+      s.title = "Nouvelle délégation, nouvelle fenêtre";
+      s.text = "Le spécialiste KB démarre lui aussi avec un seul message, sa consigne. Il ne sait rien de srv-erp-02 ni de ce qu'a dit le Diagnostic. Son modèle demande <code>rechercher_procedures</code>.";
+    });
+    steps.push((s) => {
+      s.phase = sp.phase; s.running = k; s.waitFor = sp.tool;
+      visit(s, `n-${k}-t`, `e-${k}-mt`);
+      innerTool(s);
+      visit(s, `n-${k}-m`, `e-${k}-tm`);
+      innerFinal(s);
+      s.code = [sp.line]; s.codeCls = sp.cls;
+      s.title = "Recherche dans Qdrant, puis réponse citée";
+      s.text = "<code>rechercher_procedures</code> fait une recherche hybride dans Qdrant (public seulement, jusqu'à 3 extraits préfixés <code>[KB-xxx]</code>). Deuxième appel LLM : la réponse cite <code>[KB-001]</code> et ne contient plus de <code>tool_call</code>. Boucle terminée.";
+    });
+  }
+  /* dernière : la remontée */
+  steps.push((s) => {
+    s.phase = "pc";
+    visit(s, "n-ct", "e-ctm");
+    s.specs[k].st = "done";
+    s.coord.push({t:"tool", x:d.final, name:sp.tool});
+    s.code = ["t5"];
+    s.title = "Seule la dernière réponse remonte";
+    s.text = compact
+      ? "Même mécanisme : <code>deleguer</code> renvoie le texte du dernier message, qui devient un ToolMessage chez le coordinateur. La recherche Qdrant et ses extraits ne remontent pas."
+      : `<code>return resultat["messages"][-1].content</code> : <code>deleguer</code> ne garde que le texte du dernier message. Il devient un ToolMessage chez le coordinateur, relié au <code>tool_call</code> par son identifiant. L'appel à <code>${d.toolName}</code> et sa sortie ne remontent pas. Basculez en « Vue coordinateur » : voilà tout ce qu'il voit.`;
+  });
+  return steps;
+}
+function stSynth(s, c){
+  const n = REQ[c.req].dels.length + 1;
+  s.phase = "pc";
+  llm(s, "coord", "appel " + n);
+  tr(s, 1, "coord", `génération (appel LLM ${n})`);
+  visit(s, "n-cm", "e-ctm");
+  s.coord.push({t:"ai", x:REQ[c.req].final});
+  s.ended = true;
+  s.out.push({x:"⏱ … s"});
+  for (const key of REQ[c.req].dels){ const d = DELEG[key]; s.out.push({x:`→ ${SPEC[d.spec].tool}('${d.consigne}')`}); }
+  s.out.push({x:""});
+  s.out.push({c:"good", x:"🤖 " + REQ[c.req].final});
+  s.code = ["c1","c2"];
+  s.title = "Synthèse : la réponse finale";
+  s.text = `Dernier appel LLM du coordinateur. Il relit son historique : la demande, ses tool_calls et les ToolMessages. Il rédige la réponse et reprend telles quelles les références ${c.req === "deux" ? "<code>[KB-001]</code>" : "<code>[KB-004]</code>"}. La cellule affiche les délégations trouvées dans <code>etat["messages"]</code> : seulement <code>demander_…</code>, jamais <code>${c.req === "deux" ? "ping_serveur" : "rechercher_procedures"}</code>.`;
+}
+function stCout(s, c){
+  s.phase = "pb";
+  if (c.req === "deux"){
+    s.title = "Le coût : 7 appels LLM, l'un après l'autre";
+    s.text = "3 appels pour le coordinateur, 2 par spécialiste. Mesuré pendant la préparation sur CPU (J3-01) : <b>4 à 8 minutes</b> pour cette question à deux sujets, contre 20 à 90 secondes avec un routeur. Mais le routeur n'aurait traité qu'un sujet sur deux.";
+    s.note = {cls:"", h:"Le modèle émet parfois les deux <code>tool_calls</code> dans le même <code>AIMessage</code> (constaté dans l'exercice 3.1). <code>create_agent</code> envoie alors un <code>Send(\"tools\", …)</code> par appel : les deux spécialistes tournent dans la même étape, en parallèle, et le coordinateur fait un appel de moins (6 au lieu de 7)."};
+  } else if (c.req === "un"){
+    s.title = "Le coût : 4 appels LLM pour un seul sujet";
+    s.text = "2 appels pour le coordinateur, 2 pour le spécialiste. Un routeur en fait 3 : une décision, puis le spécialiste. Mesuré en préparation (J5-04, CPU) pour une question de ping, coordinateur + Diagnostic : de 43 s à un peu plus de 2 minutes.";
+    s.note = {cls:"", h:"Pour une demande à un seul sujet, le coordinateur ajoute un appel de synthèse que le routeur n'a pas. Le multi-agents se justifie quand les demandes mélangent plusieurs sujets, ou quand il faut isoler des outils sensibles."};
+  } else {
+    s.title = "Le coût : 1 appel LLM";
+    s.text = "Sans délégation, le coordinateur coûte un appel, comme un agent unique. Le dépôt ne contient pas de mesure pour ce cas. Le surcoût apparaît dès la première délégation : au moins deux appels de plus, ceux du spécialiste, puis un appel de synthèse.";
+  }
+}
+function stHandoff(s){
+  s.phase = "px"; s.mode = "handoff";
+  s.note = {cls:"h", h:"J3-01 §6, sans LLM :<pre>def accueil(state: MessagesState) -> Command:\n    if \"compte\" in demande:\n        return Command(goto=\"comptes\", update={\"messages\": [AIMessage(\"Je vous transfère…\")]})\n    return Command(goto=END, …)</pre>Depuis un sous-graphe, on écrit <code>Command(graph=Command.PARENT, goto=\"comptes\")</code>."};
+  s.title = "L'autre pattern : le handoff";
+  s.text = "Dans un handoff, l'agent qui reçoit la demande passe la main. <code>accueil</code> renvoie <code>Command(goto=\"comptes\")</code>. Les deux nœuds partagent le même état : Comptes voit toute la conversation et répond directement. Personne ne reprend la main pour synthétiser.";
+}
+function stBilan(s, c){
+  s.phase = "pb";
+  s.title = "Qui voit quoi";
+  if (c.req === "deux") s.text = "Le coordinateur a vu 6 messages : la demande, ses 2 tool_calls, 2 ToolMessages et sa réponse. Chaque spécialiste en a vu 4, dont un seul venu de l'extérieur : la consigne. Langfuse, lui, voit tout : le <code>config</code> transmis par <code>deleguer</code> imbrique les traces des spécialistes.";
+  else if (c.req === "un") s.text = "Le coordinateur a vu 4 messages : la demande, son tool_call, le ToolMessage et sa réponse. Le spécialiste KB en a vu 4, dont un seul venu de l'extérieur : la consigne. Langfuse voit tout, grâce au <code>config</code> transmis par <code>deleguer</code>.";
+  else s.text = "Le coordinateur a vu 2 messages, et aucun spécialiste n'a été réveillé. Revenez à l'étape 1 et choisissez une demande à un ou deux sujets pour voir les fenêtres des spécialistes s'ouvrir.";
+}
+
+function makeSteps(req){
+  const st = [stAvant, stDemande, stLit];
+  if (req === "seul") st.push(stDirect);
+  else {
+    REQ[req].dels.forEach((key, i) => st.push(...delegation(key, i + 1, i > 0, req)));
+    st.push(stSynth);
+  }
+  st.push(stCout, stHandoff, stBilan);
+  return st;
+}
+
+/* ---------- état de lecture ---------- */
+const ctx = { req: "deux", view: "interne" };
+let STEPS = makeSteps(ctx.req), N = STEPS.length - 1, PHASES = [];
+let idx = 0, prevIdx = -1, playing = false, timer = null, prevModel = null;
+const seen = new Set([0]);
+
+function build(i){
+  const s = initial();
+  for (let k = 0; k <= i; k++){ resetTransient(s); STEPS[k](s, ctx); }
+  return s;
+}
+function computePhases(){
+  const s = initial(); PHASES = [];
+  for (let k = 0; k <= N; k++){ resetTransient(s); STEPS[k](s, ctx); PHASES.push(s.phase); }
+}
+const PH = {p0:"Avant", pc:"Coordinateur", pd:"Spécialiste Diagnostic", pk:"Spécialiste KB", px:"Comparer", pb:"Bilan"};
+
+/* ---------- rendu ---------- */
+function renderGraph(s){
+  $("svgAgents").hidden = s.mode === "handoff";
+  $("svgHandoff").hidden = s.mode !== "handoff";
+  $("archTitle").textContent = s.mode === "handoff" ? "Le pattern handoff" : "L'architecture";
+  $("archSub").innerHTML = s.mode === "handoff" ? "Le graphe du J3-01 §6 : <code>accueil</code> passe la main à <code>comptes</code>." : "Quatre <code>create_agent</code>, chacun avec sa boucle model ⇄ tools.";
+  NODES.forEach(n => {
+    const g = $(n); g.classList.remove("on","done");
+    if (s.active === n) g.classList.add("on"); else if (s.doneN.includes(n)) g.classList.add("done");
+  });
+  EDGES.forEach(e => {
+    const p = $(e); p.classList.remove("on","trail");
+    if (s.edge === e) p.classList.add("on"); else if (s.trail.includes(e)) p.classList.add("trail");
+  });
+  ["kb","diagnostic","acces"].forEach(k => {
+    const f = $("f-" + k); f.classList.remove("open","done","unused");
+    const st = s.specs[k].st;
+    if (st === "run") f.classList.add("open"); else if (st === "done") f.classList.add("done");
+    else if (s.ended) f.classList.add("unused");
+  });
+  $("f-coord").classList.toggle("open", !s.ended && s.coord.length > 0 && !s.running);
+}
+
+const TAG = {human:"HumanMessage", ai:"AIMessage", call:"AIMessage · tool_calls", tool:"ToolMessage"};
+function msgHtml(m, fresh, hiFrom){
+  const tag = m.t === "tool" ? `ToolMessage · ${m.name}` : TAG[m.t];
+  return `<li class="msg ${m.t}${m.from && hiFrom ? " from" : ""}${fresh ? " fresh" : ""}"><span class="tg">${tag}</span><span class="tx">${esc(m.x)}</span></li>`;
+}
+function sendHtml(send){
+  return `<div class="sendbox"><b>Envoyé au modèle pour cet appel</b><ul>${send.items.map(x => `<li>${esc(x)}</li>`).join("")}</ul></div>`;
+}
+function renderCtx(s, pm){
+  $("vCoord").setAttribute("aria-pressed", ctx.view === "coord");
+  $("vIn").setAttribute("aria-pressed", ctx.view === "interne");
+  let h = "";
+  if (s.mode === "handoff"){
+    $("ctxSub").innerHTML = "Dans le handoff, il n'y a qu'une fenêtre : le <code>state[\"messages\"]</code> du graphe, partagé.";
+    const M = [
+      {t:"human", x:"Mon compte est bloqué"},
+      {t:"ai", x:"Je vous transfère au spécialiste Comptes.", who:"accueil"},
+      {t:"ai", x:"Spécialiste Comptes : votre compte est verrouillé, il se débloque dans 15 min.", who:"comptes"},
+    ];
+    h += `<div class="win acces live"><div class="win-h"><b>graphe handoff · un seul état</b><span class="st">3 messages · partagé</span></div><ul class="msgs">` +
+      M.map(m => `<li class="msg ${m.t}"><span class="tg">${m.t === "human" ? "HumanMessage" : "AIMessage · écrit par " + m.who}</span><span class="tx">${esc(m.x)}</span></li>`).join("") +
+      `</ul></div><p class="idle-list">Comptes lit les deux premiers messages : il voit toute la conversation. Avec des sous-agents, le spécialiste n'aurait vu que la consigne.</p>`;
+    $("ctx").innerHTML = h;
+    return;
+  }
+  $("ctxSub").innerHTML = ctx.view === "coord"
+    ? "Ce que le coordinateur voit. L'intérieur des spécialistes est une boîte noire pour lui."
+    : "Le <code>state[\"messages\"]</code> de chaque agent. Les textes des modèles sont illustratifs. Les sorties des outils suivent le code (extraits abrégés).";
+  /* fenêtre du coordinateur */
+  const cFresh = pm ? pm.coord.length : 1e9;
+  const live = !s.running && s.coord.length > 0;
+  h += `<div class="win${live ? " live" : ""}"><div class="win-h"><b>coordinateur</b><span class="st">${s.coord.length} message${s.coord.length > 1 ? "s" : ""}${s.ended ? " · terminé" : ""}</span></div><ul class="msgs">`;
+  h += `<li class="msg sys"><span class="tg">SystemMessage · ajouté à chaque appel, pas stocké</span><span class="tx">${esc(PROMPT_COORDINATEUR)}</span></li>`;
+  if (!s.coord.length) h += `<li class="msg sys"><span class="tx">Aucun message pour l'instant.</span></li>`;
+  h += s.coord.map((m, i) => msgHtml(m, i >= cFresh, false)).join("");
+  if (s.waitFor) h += `<li class="msg wait"><span class="tx">⏳ en attente du résultat de ${s.waitFor}</span></li>`;
+  h += `</ul>${s.send && s.send.who === "coord" ? sendHtml(s.send) : ""}</div>`;
+  /* fenêtres des spécialistes */
+  const used = ["diagnostic","kb","acces"].filter(k => s.specs[k].st !== "idle");
+  if (ctx.view === "coord"){
+    if (s.running) h += `<div class="blackbox"><b>${SPEC[s.running].tool}(…)</b> s'exécute. Pour le coordinateur, c'est un outil qui n'a pas encore répondu. Il ne voit ni la consigne reçue, ni les appels du spécialiste, ni ses outils.</div>`;
+    else if (used.length) h += `<p class="idle-list">Des spécialistes ont travaillé, mais le coordinateur n'en voit que les ToolMessages ci-dessus.</p>`;
+  } else {
+    used.forEach(k => {
+      const sp = s.specs[k], fr = pm ? pm.specs[k].msgs.length : 1e9;
+      const stl = sp.st === "run" ? "en cours" : "terminé · seule la dernière réponse est remontée";
+      h += `<div class="win ${k}${s.running === k ? " live" : ""}"><div class="win-h"><b>${SPEC[k].agent}</b><span class="st">${sp.msgs.length} message${sp.msgs.length > 1 ? "s" : ""} · ${stl}</span></div><ul class="msgs">`;
+      h += `<li class="msg sys"><span class="tg">SystemMessage · ajouté à chaque appel, pas stocké</span><span class="tx">${esc(SPEC[k].prompt)}</span></li>`;
+      h += sp.msgs.map((m, i) => msgHtml(m, i >= fr, s.hiFrom)).join("");
+      h += `</ul>${s.send && s.send.who === k ? sendHtml(s.send) : ""}</div>`;
+    });
+  }
+  const idle = ["kb","diagnostic","acces"].filter(k => s.specs[k].st === "idle");
+  if (ctx.view === "interne" && idle.length)
+    h += `<p class="idle-list">Pas de fenêtre pour ${idle.map(k => `<code>${SPEC[k].agent}</code>`).join(" ni ")} : ${s.ended ? "jamais appelé" + (idle.length > 1 ? "s" : "") : "pas encore appelé" + (idle.length > 1 ? "s" : "")}.</p>`;
+  $("ctx").innerHTML = h;
+}
+
+function renderCode(s){
+  document.querySelectorAll("pre.code .ln").forEach(l => {
+    const id = l.dataset.l; l.className = "ln";
+    if (s.code.includes(id)) l.classList.add(s.codeCls);
+  });
+  $("note").innerHTML = s.note ? `<div class="note ${s.note.cls}">${s.note.h}</div>` : "";
+}
+
+function renderCalls(s, pm){
+  const from = pm ? pm.calls.length : 1e9;
+  const who = {coord:"coordinateur", kb:"KB", diagnostic:"Diagnostic"};
+  $("calls").innerHTML = s.calls.length ? s.calls.map((c, i) => c.k === "llm"
+    ? `<div class="call llm ${c.who}${i >= from ? " fresh" : ""}"><b>${who[c.who]}</b><span>${c.x}</span></div>`
+    : `<div class="call tool${i >= from ? " fresh" : ""}">${esc(c.x)}</div>`).join("")
+    : `<span class="none">Aucun appel pour l'instant.</span>`;
+  $("ncalls").textContent = s.nC + s.nS;
+  $("ncallsd").innerHTML = `coordinateur ${s.nC}<br>spécialistes ${s.nS}`;
+}
+
+function renderTerms(s, pm){
+  const tf = pm ? pm.trace.length : 1e9;
+  $("tbTrace").innerHTML = s.trace.length
+    ? s.trace.map((t, i) => `<div class="tr ${t.who}${i >= tf ? " fresh" : ""}" style="padding-left:${t.d * 16}px">${t.d ? "<i>└</i>" : ""}<b>${esc(t.x)}</b></div>`).join("")
+    : `<div class="sys">Rien n'a encore été tracé.</div>`;
+  $("pillT").className = "pill" + (s.trace.length ? " run" : "");
+  $("pillT").textContent = s.trace.length ? s.trace.length + " observations" : "vide";
+
+  if (s.mode === "handoff"){
+    $("outTitle").innerHTML = "Sortie de la cellule <small>J3-01 §6, handoff</small>";
+    $("tbOut").innerHTML = [
+      {c:"cmd", x:'for m in handoff.invoke({"messages": [("user", "Mon compte est bloqué")]})["messages"]:'},
+      {c:"cmd", x:'    print(f"{type(m).__name__:<13} {m.content}")'},
+      {x:"HumanMessage  Mon compte est bloqué"},
+      {x:"AIMessage     Je vous transfère au spécialiste Comptes."},
+      {x:"AIMessage     Spécialiste Comptes : votre compte est verrouillé, il se débloque dans 15 min."},
+    ].map(l => `<div class="${l.c || ""}">${esc(l.x)}</div>`).join("");
+    $("pillO").className = "pill"; $("pillO").textContent = "terminée";
+    return;
+  }
+  $("outTitle").innerHTML = "Sortie de la cellule <small>J3-02 §7, avec la demande choisie</small>";
+  const of = pm ? pm.out.length : 1e9;
+  let h = s.out.map((l, i) => `<div class="${l.c || ""}${i >= of ? " fresh" : ""}">${esc(l.x) || "&nbsp;"}</div>`).join("");
+  if (s.outRun) h += `<div class="spin">   ainvoke() en cours, la cellule attend</div>`;
+  if (s.ended) h += `<div class="sys">(la durée affichée par ⏱ est discutée à l'étape du coût)</div>`;
+  if (!s.out.length) h = `<div class="sys">La cellule n'est pas encore lancée.</div>`;
+  $("tbOut").innerHTML = h;
+  $("pillO").className = "pill" + (s.outRun ? " run" : "");
+  $("pillO").textContent = s.outRun ? "en cours" : s.ended ? "terminée" : "pas lancée";
+}
+
+function render(){
+  const s = build(idx);
+  if (s.ended) s.outRun = false;
+  else if (idx >= 1) s.outRun = true;
+  const forward = idx === prevIdx + 1;
+  const pm = forward ? prevModel : null;
+
+  $("stepno").textContent = `Étape ${idx} / ${N}`;
+  const chip = $("phasechip"); chip.className = "phase-chip " + PHASES[idx]; chip.textContent = PH[PHASES[idx]];
+  $("captitle").textContent = s.title;
+  $("captext").innerHTML = s.text;
+  $("choices").hidden = !s.choices;
+  document.querySelectorAll("#reqBtns button").forEach(b => b.setAttribute("aria-pressed", b.dataset.req === ctx.req));
+
+  renderCalls(s, pm);
+  renderGraph(s);
+  renderCtx(s, pm);
+  renderCode(s);
+  renderTerms(s, pm);
+
+  $("bPrev").disabled = idx === 0;
+  $("bNext").disabled = idx === N;
+  $("bPlay").disabled = idx === N;
+  seen.add(idx);
+  $("dots").querySelectorAll(".dot").forEach((d, i) => {
+    d.classList.toggle("cur", i === idx);
+    d.classList.toggle("seen", seen.has(i));
+  });
+  if (idx === N && playing) stop();
+  prevModel = s; prevIdx = idx;
+}
+
+function makeDots(){
+  $("dots").innerHTML = PHASES.map((p, i) => `<button class="dot ${p}" aria-label="Aller à l'étape ${i}" data-i="${i}"></button>`).join("");
+}
+function setReq(r){
+  if (r === ctx.req) return;
+  ctx.req = r; STEPS = makeSteps(r); N = STEPS.length - 1; computePhases(); makeDots();
+  seen.clear(); seen.add(0); seen.add(1);
+  idx = Math.min(idx, 1); if (idx < 1) idx = 1;
+  prevIdx = -2; render(); if (playing) schedule();
+}
+
+/* ---------- commandes ---------- */
+const DUR = i => { const s = build(i); const len = (s.text || "").replace(/<[^>]+>/g, "").length; return Math.max(5000, Math.min(10000, 2500 + len * 30)); };
+function go(i){ idx = Math.max(0, Math.min(N, i)); render(); if (playing) schedule(); }
+function schedule(){ clearTimeout(timer); timer = setTimeout(() => { if (idx < N) { idx++; render(); if (playing) schedule(); } }, DUR(idx)); }
+function play(){ if (idx === N) return; playing = true; $("bPlay").textContent = "❚❚ Pause"; schedule(); }
+function stop(){ playing = false; clearTimeout(timer); $("bPlay").textContent = "▶ Lecture"; }
+
+computePhases(); makeDots();
+$("dots").addEventListener("click", e => { const b = e.target.closest(".dot"); if (b){ stop(); prevIdx = -2; go(+b.dataset.i); } });
+$("bNext").onclick = () => { stop(); go(idx + 1); };
+$("bPrev").onclick = () => { stop(); prevIdx = -2; go(idx - 1); };
+$("bPlay").onclick = () => playing ? stop() : play();
+$("bReset").onclick = () => {
+  stop(); ctx.view = "interne";
+  if (ctx.req !== "deux"){ ctx.req = "deux"; STEPS = makeSteps("deux"); N = STEPS.length - 1; computePhases(); makeDots(); }
+  seen.clear(); prevIdx = -2; go(0);
+};
+$("reqBtns").addEventListener("click", e => { const b = e.target.closest("button"); if (b) setReq(b.dataset.req); });
+$("vCoord").onclick = () => { ctx.view = "coord"; prevIdx = -2; render(); };
+$("vIn").onclick = () => { ctx.view = "interne"; prevIdx = -2; render(); };
+document.addEventListener("keydown", e => {
+  if (e.target.matches("input,textarea")) return;
+  if (e.key === "ArrowRight" && idx < N){ e.preventDefault(); stop(); go(idx + 1); }
+  else if (e.key === "ArrowLeft" && idx > 0){ e.preventDefault(); stop(); prevIdx = -2; go(idx - 1); }
+  else if (e.key === " " && !e.target.matches("button")){ e.preventDefault(); playing ? stop() : play(); }
+});
+
+render();
+})();
+</script>
+</body>
+</html>

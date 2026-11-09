@@ -1,0 +1,969 @@
+<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Send et map-reduce</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout : un lecteur pas à pas. En haut le chrono et le bandeau des phases, puis la narration,
+   puis trois vues synchronisées (graphe, état et branches, code), la frise temporelle et la sortie des cellules. */
+:root{
+  --bg:#eef1f6; --surface:#ffffff; --surface-2:#e6eaf1; --line:#d2d9e4; --line-strong:#9aa6b8;
+  --fg:#121924; --muted:#576377;
+  --run:#2353cc; --run-soft:#dfe7fb; --on-run:#ffffff;
+  --pause:#a86400; --pause-soft:#fcefd8;
+  --disk:#0b7a68; --disk-soft:#dcf2ed;
+  --human:#b0236a; --human-soft:#f9e1ee;
+  --err:#c42b2b; --err-soft:#fbe3e3;
+  --term-bg:#0d1218; --term-fg:#d9e0ea; --term-muted:#7f8a9b; --term-line:#202a36;
+  --f-display:"IBM Plex Sans Condensed","Arial Narrow",system-ui,sans-serif;
+  --f-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,"Cascadia Mono",Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0c1016; --surface:#141a23; --surface-2:#1b2330; --line:#29323f; --line-strong:#56637a;
+  --fg:#e5eaf2; --muted:#94a1b5;
+  --run:#7aa2ff; --run-soft:#1c2a4a; --on-run:#0b1222;
+  --pause:#f0b03a; --pause-soft:#3a2b10;
+  --disk:#3fc8b0; --disk-soft:#0f2e2a;
+  --human:#f27bb4; --human-soft:#3a1529;
+  --err:#ff7676; --err-soft:#3a1515;
+  --term-bg:#06090d; --term-fg:#d9e0ea; --term-muted:#7f8a9b; --term-line:#1a222d;
+  color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --bg:#0c1016; --surface:#141a23; --surface-2:#1b2330; --line:#29323f; --line-strong:#56637a;
+  --fg:#e5eaf2; --muted:#94a1b5;
+  --run:#7aa2ff; --run-soft:#1c2a4a; --on-run:#0b1222;
+  --pause:#f0b03a; --pause-soft:#3a2b10;
+  --disk:#3fc8b0; --disk-soft:#0f2e2a;
+  --human:#f27bb4; --human-soft:#3a1529;
+  --err:#ff7676; --err-soft:#3a1515;
+  --term-bg:#06090d; --term-fg:#d9e0ea; --term-muted:#7f8a9b; --term-line:#1a222d;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:15px;line-height:1.5;overflow-x:hidden}
+.app{max-width:1440px;margin:0 auto;padding-block:20px 48px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
+  display:flex;flex-direction:column;gap:14px}
+code,.mono{font-family:var(--f-mono);font-size:.9em}
+p code,.cap-text code,.note code,.lesson code{background:var(--surface-2);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+
+/* En-tête */
+.top{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;justify-content:space-between}
+.top h1{font-family:var(--f-display);font-weight:700;font-size:clamp(26px,3.2vw,38px);line-height:1.05;margin:0;text-wrap:balance;letter-spacing:-.01em}
+.top .sub{color:var(--muted);margin:6px 0 0;max-width:72ch}
+.clock{display:flex;align-items:baseline;gap:12px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px 16px}
+.clock .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted)}
+.clock .t{font-family:var(--f-mono);font-size:30px;font-weight:600;font-variant-numeric:tabular-nums}
+.clock .gap{font-family:var(--f-mono);font-size:13px;color:var(--pause);min-width:9ch}
+
+/* Bandeau des phases */
+.timeline{position:relative;display:grid;grid-template-columns:15fr 25fr 18fr 24fr 18fr;gap:4px;padding-top:4px}
+.seg{border-radius:6px;padding:7px 10px;font-size:12.5px;line-height:1.25;border:1px solid transparent;min-width:0}
+.seg b{display:block;font-family:var(--f-display);font-size:14px;font-weight:600}
+.seg span{color:var(--muted)}
+.seg.s-map{background:var(--run-soft);border-color:color-mix(in srgb,var(--run) 35%,transparent)}
+.seg.s-par{background:var(--disk-soft);border-color:color-mix(in srgb,var(--disk) 35%,transparent)}
+.seg.s-red{background:var(--human-soft);border-color:color-mix(in srgb,var(--human) 35%,transparent)}
+.seg.s-llm{background:repeating-linear-gradient(135deg,var(--pause-soft) 0 8px,transparent 8px 14px);border-color:color-mix(in srgb,var(--pause) 45%,transparent)}
+.seg.s-lim{background:var(--surface-2);border-color:var(--line-strong)}
+.seg.dim{opacity:.45}
+.marker{position:absolute;top:-6px;bottom:-6px;width:3px;background:var(--fg);border-radius:2px;transition:left .5s ease;pointer-events:none}
+.marker::before{content:"";position:absolute;top:-5px;left:-5px;border:6.5px solid transparent;border-top-color:var(--fg)}
+
+/* Narration + commandes */
+.stage{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px;align-items:start;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 20px}
+.cap-step{font-size:12px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.phase-chip{font-weight:600;padding:2px 8px;border-radius:99px;letter-spacing:.05em}
+.phase-chip.av,.phase-chip.fin{background:var(--surface-2);color:var(--muted)}
+.phase-chip.map{background:var(--run-soft);color:var(--run)}
+.phase-chip.par{background:var(--disk-soft);color:var(--disk)}
+.phase-chip.red{background:var(--human-soft);color:var(--human)}
+.phase-chip.llm{background:var(--pause-soft);color:var(--pause)}
+.phase-chip.lim{background:var(--surface-2);color:var(--fg)}
+.cap-title{font-family:var(--f-display);font-size:clamp(22px,2.4vw,28px);font-weight:700;margin:4px 0 6px;line-height:1.15;text-wrap:balance}
+.cap-text{font-size:16.5px;max-width:78ch;margin:0}
+.cap-text b{font-weight:600}
+.choices{display:flex;flex-wrap:wrap;gap:14px 22px;margin-top:12px;padding:12px 14px;border:1px dashed var(--human);border-radius:10px;background:var(--human-soft)}
+.choices[hidden]{display:none}
+.choices .grp{display:flex;flex-direction:column;gap:6px}
+.choices .grp>span{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--human);font-weight:600}
+.seg-btns{display:flex;gap:6px;flex-wrap:wrap}
+.seg-btns button{font:inherit;font-size:14px;padding:6px 12px;border-radius:7px;border:1px solid var(--line-strong);background:var(--surface);color:var(--fg);cursor:pointer}
+.seg-btns button.mono{font-family:var(--f-mono);font-size:13px}
+.seg-btns button[aria-pressed="true"]{background:var(--human);border-color:var(--human);color:var(--surface)}
+.controls{display:flex;flex-direction:column;gap:10px;align-items:flex-end}
+.btns{display:flex;gap:6px;flex-wrap:wrap}
+.btn{font:inherit;font-weight:600;font-size:14px;padding:9px 14px;border-radius:8px;border:1px solid var(--line-strong);background:var(--surface);color:var(--fg);cursor:pointer;white-space:nowrap}
+.btn.primary{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.btn:disabled{opacity:.35;cursor:not-allowed}
+.btn:focus-visible,.dot:focus-visible,.seg-btns button:focus-visible{outline:3px solid var(--run);outline-offset:2px}
+.dots{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;max-width:330px}
+.dot{width:17px;height:17px;border-radius:4px;border:1px solid var(--line-strong);background:var(--surface);cursor:pointer;padding:0}
+.dot.map{border-color:var(--run)} .dot.par{border-color:var(--disk)} .dot.red{border-color:var(--human)} .dot.llm{border-color:var(--pause)} .dot.lim{border-color:var(--fg)}
+.dot.seen.map{background:var(--run-soft)} .dot.seen.par{background:var(--disk-soft)} .dot.seen.red{background:var(--human-soft)} .dot.seen.llm{background:var(--pause-soft)} .dot.seen.lim,.dot.seen.av,.dot.seen.fin{background:var(--surface-2)}
+.dot.cur{outline:2px solid var(--fg);outline-offset:1px}
+.dot:disabled{opacity:.3;cursor:not-allowed}
+.hint{font-size:12px;color:var(--muted)}
+
+/* Trois vues */
+.views{display:grid;grid-template-columns:minmax(260px,.85fr) minmax(0,1.1fr) minmax(0,1.25fr);gap:14px;align-items:start}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px;min-width:0}
+.panel h2{font-family:var(--f-display);font-size:15px;font-weight:600;margin:0 0 2px;text-transform:uppercase;letter-spacing:.06em}
+.panel .ph{font-size:12.5px;color:var(--muted);margin:0 0 10px}
+
+/* Graphe */
+#graph{width:100%;max-width:380px;display:block;margin:0 auto}
+#graph text{font-family:var(--f-mono);font-size:13px;fill:var(--fg)}
+#graph .elab{font-size:10.5px;fill:var(--muted);font-family:var(--f-body)}
+#graph .sub{font-size:10px;fill:var(--muted)}
+#graph .send-lbl{font-family:var(--f-mono);font-size:10px;fill:var(--run);font-weight:600}
+#graph .bar-lbl{font-family:var(--f-body);font-size:10.5px;fill:var(--human);font-weight:600}
+#graph .cap{font-family:var(--f-body);font-size:11.5px;fill:var(--pause);font-weight:600}
+.edge{stroke:var(--line-strong);stroke-width:1.8;fill:none;marker-end:url(#arr)}
+.edge.trail{stroke:var(--run);opacity:.55;marker-end:url(#arrRun)}
+.edge.on{stroke:var(--run);stroke-width:3;opacity:1;stroke-dasharray:7 5;animation:flow .7s linear infinite;marker-end:url(#arrRun)}
+.edge.err{stroke:var(--err);stroke-width:2.4;stroke-dasharray:4 4;marker-end:url(#arrErr)}
+@keyframes flow{to{stroke-dashoffset:-12}}
+.node rect,.node circle{fill:var(--surface);stroke:var(--line-strong);stroke-width:1.6;transition:fill .3s,stroke .3s}
+.node.ghost rect{stroke-dasharray:5 4}
+.node.done rect,.node.done circle{fill:var(--run-soft);stroke:var(--run)}
+.node.on rect,.node.on circle{fill:var(--disk);stroke:var(--disk)}
+.node.on text{fill:var(--on-run) !important}
+.node.err rect,.node.err circle{fill:var(--err-soft);stroke:var(--err);stroke-width:2.4}
+.barrier{stroke:var(--human);stroke-width:2;stroke-dasharray:6 5}
+.errbadge circle{fill:var(--err)} .errbadge text{fill:#fff !important;font-weight:700;font-family:var(--f-body) !important}
+.gdim{opacity:.32}
+.gfresh{animation:fadein .5s ease both}
+@keyframes fadein{from{opacity:0}}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--muted);margin-top:6px;justify-content:center}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:-2px;margin-right:5px;border:1.5px solid}
+.lg-on{background:var(--disk);border-color:var(--disk)} .lg-done{background:var(--run-soft);border-color:var(--run)} .lg-bar{border-color:var(--human);border-style:dashed !important}
+
+/* État et branches */
+.sub-h{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 6px;font-weight:600}
+.sub-h code{text-transform:none;letter-spacing:0}
+.kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 12px;font-family:var(--f-mono);font-size:12px;margin:0}
+.kv dt{color:var(--muted)} .kv dd{margin:0;overflow-wrap:anywhere}
+.clist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:3px}
+.clist li{background:var(--disk-soft);border-left:3px solid var(--disk);border-radius:4px;padding:2px 6px}
+.blk{border-top:1px dashed var(--line);margin-top:10px;padding-top:10px}
+.sends{font-family:var(--f-mono);font-size:12px;display:flex;flex-direction:column;gap:3px}
+.sends div{background:var(--run-soft);border-left:3px solid var(--run);border-radius:4px;padding:2px 6px;overflow-wrap:anywhere}
+.brs{display:flex;flex-direction:column;gap:6px}
+.br{border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12.5px}
+.br.on{border-color:var(--disk);box-shadow:0 0 0 3px var(--disk-soft)}
+.br.done{border-color:color-mix(in srgb,var(--run) 50%,transparent)}
+.br-h{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.br-h b{font-family:var(--f-mono);font-weight:600}
+.br-h .n{color:var(--muted)}
+.tag{margin-left:auto;font-size:11px;font-weight:600;padding:1px 8px;border-radius:99px;background:var(--surface-2);color:var(--muted)}
+.tag.on{background:var(--disk-soft);color:var(--disk)}
+.tag.done{background:var(--run-soft);color:var(--run)}
+.tag.wait{background:var(--pause-soft);color:var(--pause)}
+.br-io{display:grid;grid-template-columns:56px minmax(0,1fr);gap:2px 8px;margin-top:4px}
+.br-io span{color:var(--muted);font-size:11.5px}
+.br-io code{font-size:11.5px;overflow-wrap:anywhere}
+.fuse{margin-top:10px;border-radius:8px;padding:8px 10px;border:1.5px solid var(--human);background:var(--human-soft);font-size:12.5px}
+.fuse b{display:block;color:var(--human)}
+.fuse code{display:block;margin:4px 0;font-size:11.5px;overflow-wrap:anywhere}
+.fuse.err{border-color:var(--err);background:var(--err-soft)}
+.fuse.err b{color:var(--err)}
+.chips{display:flex;flex-wrap:wrap;gap:4px}
+.chips span{font-family:var(--f-mono);font-size:11.5px;padding:2px 7px;border-radius:5px;background:var(--surface-2)}
+.chips span.done{background:var(--run-soft)}
+.chips span.down{background:var(--err-soft);color:var(--err)}
+.empty{font-size:12.5px;color:var(--muted);font-style:italic}
+
+/* Code */
+.code-h{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:10px 0 4px;font-weight:600;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.code-h:first-of-type{margin-top:0}
+.code-h code{text-transform:none;letter-spacing:0}
+pre.code{margin:0;background:var(--surface-2);border-radius:8px;padding:6px 0;overflow-x:auto;font-family:var(--f-mono);font-size:12.3px;line-height:1.6}
+pre.code .ln{display:block;padding:0 12px;white-space:pre;border-left:3px solid transparent;transition:background .25s;width:max-content;min-width:100%}
+pre.code .ln.hl{background:var(--run-soft);border-left-color:var(--run)}
+pre.code .ln.hlp{background:var(--disk-soft);border-left-color:var(--disk)}
+pre.code .ln.hlh{background:var(--human-soft);border-left-color:var(--human)}
+pre.code .ln.hll{background:var(--pause-soft);border-left-color:var(--pause)}
+pre.code .ln.hle{background:var(--err-soft);border-left-color:var(--err)}
+pre.code .ln.skip{opacity:.35}
+.k{color:var(--human)} .s{color:var(--disk)} .f{color:var(--run)} .c{color:var(--muted);font-style:italic}
+.note{margin-top:8px;border-radius:8px;padding:8px 11px;font-size:13.5px;border:1.5px solid var(--run);background:var(--run-soft)}
+.note.p{border-color:var(--disk);background:var(--disk-soft)}
+.note.h{border-color:var(--human);background:var(--human-soft)}
+.note.l{border-color:var(--pause);background:var(--pause-soft)}
+.note.e{border-color:var(--err);background:var(--err-soft)}
+
+/* Frise + terminal */
+.bottom{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:14px;align-items:start}
+.fgrp{margin-top:10px}
+.fgrp:first-child{margin-top:0}
+.fgrp-t{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:600;margin-bottom:4px}
+.fbody{position:relative}
+.frow{display:grid;grid-template-columns:118px minmax(0,1fr);gap:8px;align-items:center;min-height:24px}
+.frow .lab{font-family:var(--f-mono);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.track{position:relative;height:20px;background:var(--surface-2);border-radius:4px}
+.frow.thin{min-height:16px} .frow.thin .track{height:13px}
+.bar{position:absolute;top:2px;bottom:2px;border-radius:4px;font-size:10.5px;line-height:14px;padding:0 5px;white-space:nowrap;overflow:hidden;color:var(--fg);border:1px solid}
+.frow.thin .bar{top:1px;bottom:1px;line-height:9px;font-size:0}
+.bar.c1{background:var(--run-soft);border-color:var(--run)}
+.bar.c2{background:var(--disk-soft);border-color:var(--disk)}
+.bar.c3{background:var(--human-soft);border-color:var(--human)}
+.bar.llm{background:repeating-linear-gradient(135deg,var(--pause-soft) 0 6px,transparent 6px 10px);border-color:var(--pause)}
+.bar.open{border-right-style:dashed;border-top-right-radius:0;border-bottom-right-radius:0}
+.bar.grow{animation:grow .6s ease-out both}
+@keyframes grow{from{clip-path:inset(0 calc((1 - var(--r,0)) * 100%) 0 0)}}
+.fov{position:absolute;top:0;bottom:0;left:126px;right:0;pointer-events:none}
+.vline{position:absolute;top:-4px;bottom:-4px;width:0;border-left:2px dashed var(--human)}
+.vline span{position:absolute;top:-16px;left:4px;font-size:10.5px;color:var(--human);font-weight:600;white-space:nowrap}
+.vline.now{border-left:2px solid var(--fg)}
+.vline.now span{color:var(--fg)}
+.vline.right span{left:auto;right:4px}
+.axis{display:grid;grid-template-columns:118px minmax(0,1fr);gap:8px;margin-top:4px}
+.axis .ticks{position:relative;height:16px;font-family:var(--f-mono);font-size:10.5px;color:var(--muted)}
+.axis .ticks span{position:absolute;transform:translateX(-50%);white-space:nowrap}
+.axis .ticks span:first-child{transform:none}
+.axis .unit{font-size:10.5px;color:var(--muted);text-align:right;align-self:center}
+.fnote{font-size:12px;color:var(--muted);margin:8px 0 0}
+.fempty{font-size:12.5px;color:var(--muted);font-style:italic}
+
+.term{background:var(--term-bg);color:var(--term-fg);border-radius:12px;overflow:hidden;border:1px solid var(--term-line);min-width:0;display:flex;flex-direction:column}
+.term-h{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 14px;border-bottom:1px solid var(--term-line);font-size:13px}
+.term-h .who{font-weight:600}
+.term-h .who small{font-weight:400;color:var(--term-muted)}
+.pill{font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:99px;text-transform:uppercase;letter-spacing:.05em;background:#222b37;color:var(--term-muted)}
+.pill.run{background:#173a2f;color:#5fe0b5}
+.pill.dead{background:#3a1d1d;color:#ff9a9a}
+.term-b{padding:10px 14px 14px;font-family:var(--f-mono);font-size:12.4px;line-height:1.6;min-height:190px;overflow-x:auto}
+.term-b div{white-space:pre-wrap;overflow-wrap:anywhere}
+.term-b .cmd{color:#9cc2ff}
+.term-b .sys{color:var(--term-muted);font-style:italic}
+.term-b .warn{color:#ffc561}
+.term-b .bad{color:#ff8f8f}
+.term-b .good{color:#78e2bd}
+.term-b .spin{color:var(--term-muted)}
+.term-b .spin::after{content:"";display:inline-block;width:1ch;animation:dots 1.2s steps(4) infinite}
+@keyframes dots{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
+.fresh{animation:fresh .45s ease both}
+@keyframes fresh{from{opacity:0;transform:translateY(5px)}}
+
+/* À retenir */
+.lessons{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+.lesson{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.lesson .n{font-family:var(--f-display);font-weight:700;font-size:13px;color:var(--muted);letter-spacing:.06em}
+.lesson h3{font-family:var(--f-display);font-size:18px;margin:2px 0 6px;line-height:1.2}
+.lesson p{margin:0;font-size:14px;color:var(--muted)}
+.lesson p code{color:var(--fg)}
+.sect-h{font-family:var(--f-display);font-size:20px;font-weight:700;margin:10px 0 0}
+
+@media (max-width:1180px){
+  .views{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  .views .panel.code-p{grid-column:1 / -1}
+  .bottom{grid-template-columns:1fr}
+  .lessons{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:760px){
+  .stage{grid-template-columns:1fr;padding:14px}
+  .controls{align-items:stretch}
+  .dots{justify-content:flex-start;max-width:none}
+  .views,.lessons{grid-template-columns:1fr}
+  .timeline{grid-template-columns:repeat(5,minmax(0,1fr))}
+  .seg{padding:6px 6px}
+  .seg b{font-size:12px;overflow-wrap:anywhere}
+  .seg span{display:none}
+  .clock .t{font-size:24px}
+  .frow,.axis{grid-template-columns:84px minmax(0,1fr)}
+  .fov{left:92px}
+  .btn{padding:8px 10px}
+}
+@media (prefers-reduced-motion:reduce){
+  *{animation:none !important;transition:none !important}
+}
+</style>
+</head>
+<body>
+
+<div class="app">
+  <header class="top">
+    <div>
+      <h1>Send et le map-reduce, pas à pas</h1>
+      <p class="sub">Pour qualifier un incident sur srv-erp-02, HelpDesk-Ops interroge trois sources à la fois, fusionne leurs constats, puis rédige une seule synthèse. Le code est celui de <code>notebooks/_sources/build_j3_03.py</code> (notebook <code>J3_03_parallelisme_send.ipynb</code>).</p>
+    </div>
+    <div class="clock" aria-label="Chrono de la scène">
+      <span class="lbl" id="clocklbl">Chrono</span>
+      <span class="t" id="clock">0,0 s</span>
+      <span class="gap" id="clockgap"></span>
+    </div>
+  </header>
+
+  <div class="timeline" aria-hidden="true">
+    <div class="seg s-map" id="sg0"><b>Répartir</b><span>une liste de Send</span></div>
+    <div class="seg s-par" id="sg1"><b>En parallèle</b><span>un super-step, trois branches</span></div>
+    <div class="seg s-red" id="sg2"><b>Fusionner</b><span>le reducer, puis la mesure</span></div>
+    <div class="seg s-llm" id="sg3"><b>LLM et synthèse</b><span>un serveur partagé, une synthèse</span></div>
+    <div class="seg s-lim" id="sg4"><b>Borner</b><span>max_concurrency</span></div>
+    <div class="marker" id="marker"></div>
+  </div>
+
+  <section class="stage" aria-live="polite">
+    <div>
+      <div class="cap-step"><span id="stepno">Étape 0 / 15</span><span class="phase-chip av" id="phasechip">Avant</span></div>
+      <h2 class="cap-title" id="captitle"></h2>
+      <p class="cap-text" id="captext"></p>
+      <div class="choices" id="choicesR" hidden>
+        <div class="grp">
+          <span>La clé constats</span>
+          <div class="seg-btns">
+            <button type="button" id="rOn" aria-pressed="true">avec reducer (operator.add)</button>
+            <button type="button" id="rOff" aria-pressed="false">sans reducer</button>
+          </div>
+        </div>
+      </div>
+      <div class="choices" id="choicesS" hidden>
+        <div class="grp">
+          <span>Serveurs à vérifier</span>
+          <div class="seg-btns" id="nBtns">
+            <button type="button" class="mono" data-n="2" aria-pressed="false">2</button>
+            <button type="button" class="mono" data-n="4" aria-pressed="false">4</button>
+            <button type="button" class="mono" data-n="8" aria-pressed="true">8 (notebook)</button>
+          </div>
+        </div>
+        <div class="grp">
+          <span>max_concurrency</span>
+          <div class="seg-btns" id="lBtns">
+            <button type="button" class="mono" data-l="2" aria-pressed="true">2 (notebook)</button>
+            <button type="button" class="mono" data-l="4" aria-pressed="false">4</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="controls">
+      <div class="btns">
+        <button class="btn" id="bReset" title="Recommencer">⟲</button>
+        <button class="btn" id="bPrev">◀ Précédent</button>
+        <button class="btn primary" id="bPlay">▶ Lecture</button>
+        <button class="btn" id="bNext">Suivant ▶</button>
+      </div>
+      <div class="dots" id="dots"></div>
+      <div class="hint">Clavier : ← → pour avancer, espace pour lecture/pause</div>
+    </div>
+  </section>
+
+  <div class="views">
+    <section class="panel">
+      <h2>Le graphe</h2>
+      <p class="ph">Une instance du nœud par Send. Les branches actives, celles qui ont fini.</p>
+      <svg id="graph" viewBox="0 0 360 440" role="img" aria-label="Graphe : START, repartir, instances de interroger, synthetiser, END"></svg>
+      <div class="legend"><span><i class="lg-on"></i>en cours</span><span><i class="lg-done"></i>terminé</span><span><i class="lg-bar"></i>barrière du super-step</span></div>
+    </section>
+
+    <section class="panel">
+      <h2>L'état et les branches</h2>
+      <p class="ph">Ce que contient l'état partagé, ce que chaque branche reçoit et renvoie.</p>
+      <div id="data"></div>
+    </section>
+
+    <section class="panel code-p">
+      <h2>Le code</h2>
+      <p class="ph">Extraits du notebook. La ligne surlignée est celle qui travaille.</p>
+      <div class="code-h"><span>Le graphe <code>enquete</code></span></div>
+      <pre class="code" id="codeMain"></pre>
+      <div class="code-h"><span id="codeBTitle"></span></div>
+      <pre class="code" id="codeB"></pre>
+      <div id="note"></div>
+    </section>
+  </div>
+
+  <div class="bottom">
+    <section class="panel">
+      <h2>La frise temporelle</h2>
+      <p class="ph" id="friseph">Le temps passe de gauche à droite. Une ligne par branche.</p>
+      <div id="frise"></div>
+    </section>
+    <section class="term">
+      <div class="term-h"><span class="who">Sortie des cellules <small>notebook J3-03 · durées illustratives</small></span><span class="pill" id="pill">pas lancé</span></div>
+      <div class="term-b" id="tb"></div>
+    </section>
+  </div>
+
+  <h2 class="sect-h">Ce qu'il faut retenir</h2>
+  <div class="lessons">
+    <article class="lesson"><div class="n">1 · RÉPARTIR</div><h3>Une liste de Send, une branche par élément</h3><p>La fonction de routage renvoie <code>[Send("noeud", charge), …]</code>. Le nombre de branches se décide à l'exécution. Chaque branche reçoit sa charge utile, pas l'état complet.</p></article>
+    <article class="lesson"><div class="n">2 · FUSIONNER</div><h3>Un reducer sur la clé commune</h3><p>Les branches écrivent la même clé dans le même super-step. Avec <code>Annotated[list, operator.add]</code>, les listes se concatènent dans l'ordre des Send. Sans reducer, <code>InvalidUpdateError</code>.</p></article>
+    <article class="lesson"><div class="n">3 · LA BARRIÈRE</div><h3>Le nœud suivant attend toutes les branches</h3><p>Le super-step finit quand sa dernière tâche finit. La branche la plus lente fixe la durée. <code>synthetiser</code> s'exécute une seule fois, avec tous les constats.</p></article>
+    <article class="lesson"><div class="n">4 · LES LIMITES</div><h3>Paralléliser ce qui attend, et borner</h3><p>Le gain est fort sur des attentes réseau, plus faible sur un serveur LLM local partagé. <code>max_concurrency</code> plafonne les branches simultanées selon ce que la cible supporte.</p></article>
+  </div>
+</div>
+
+<script>
+(function(){
+"use strict";
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fr = x => x.toFixed(1).replace(".", ",");
+
+/* ---------- données du fil rouge (notebook J3-03) ---------- */
+const QUESTION = "srv-erp-02 est très lent depuis ce matin pour toute la compta";
+const QS = "srv-erp-02 est très lent…";
+const SRC = ["kb", "supervision", "tickets"];
+const FIN = {kb: 1.2, supervision: 1.0, tickets: 1.0};          // kb : 1 s d'attente + recherche (valeur illustrative)
+const RES = {
+  kb: "[KB-…] … (les 2 articles les plus proches, kb.rechercher(question, k=2))",
+  supervision: "srv-erp-02 : aucune réponse au ping (100 % de perte)",
+  tickets: "2 tickets ouverts sur srv-erp-02 ces 7 derniers jours (NT-0031 : lenteurs ; NT-0035 : déconnexions)",
+};
+const CONSTAT = src => `[${src} · ${FIN[src].toFixed(1)} s] ${RES[src]}`;
+const short = (t, n) => t.length > n ? t.slice(0, n - 1) + "…" : t;
+const BASE = ["srv-mail-01", "srv-erp-02", "srv-vpn-01", "srv-fichiers-03"];
+const hosts = n => n === 2 ? BASE.slice(0, 2) : n === 4 ? BASE.slice() : BASE.concat(BASE);
+const PING = h => h === "srv-erp-02" ? `${h} : aucune réponse au ping (100 % de perte)` : `${h} : répond au ping en 3 ms`;
+
+/* ---------- coloration minimale du code Python ---------- */
+const KW = /\b(class|def|async|await|return|for|in|if|else|lambda|import|from|with|None)\b/g;
+function hlCode(line){
+  let out = "", i = 0, buf = "";
+  const flush = () => { if (buf){ out += esc(buf).replace(KW, '<span class="k">$1</span>').replace(/\b([A-Za-z_]\w*)(?=\()/g, '<span class="f">$1</span>'); buf = ""; } };
+  while (i < line.length){
+    const ch = line[i];
+    if (ch === "#"){ flush(); out += `<span class="c">${esc(line.slice(i))}</span>`; break; }
+    if (ch === '"'){
+      flush(); let j = i + 1;
+      while (j < line.length && line[j] !== '"'){ if (line[j] === "\\") j++; j++; }
+      out += `<span class="s">${esc(line.slice(i, j + 1))}</span>`; i = j + 1; continue;
+    }
+    buf += ch; i++;
+  }
+  flush();
+  return out;
+}
+
+function codeMain(c){
+  return [
+    ["c1", 'class EtatEnquete(TypedDict):'],
+    ["c2", '    question: str'],
+    ["c3", c.reducer ? '    constats: Annotated[list[str], operator.add]   # reducer : chaque branche AJOUTE son constat'
+                     : '    constats: list[str]   # sans reducer : une seule valeur par super-step'],
+    ["c4", 'class Mission(TypedDict):                           # charge utile d\'une branche'],
+    ["c5", '    source: str'],
+    ["c6", '    question: str'],
+    ["c7", 'def repartir(state: EtatEnquete) -> list[Send]:'],
+    ["c8", '    return [Send("interroger", {"source": nom, "question": state["question"]}) for nom in SOURCES]'],
+    ["c9", 'async def interroger(mission: Mission) -> dict:'],
+    ["c10", '    resultat = await SOURCES[mission["source"]](mission["question"])'],
+    ["c11", '    return {"constats": [f"[{mission[\'source\']} · {…:.1f} s] {resultat}"]}'],
+    ["c12", 'b.add_conditional_edges(START, repartir, ["interroger"])'],
+    ["c13", 'b.add_edge("interroger", END)'],
+  ];
+}
+const CODE_B = {
+  run: {t: "La cellule de mesure", l: () => [
+    ["r1", 'QUESTION = "srv-erp-02 est très lent depuis ce matin pour toute la compta"'],
+    ["r2", 'etat = await enquete.ainvoke({"question": QUESTION, "constats": []})'],
+    ["r3", 'print(f"Parallèle  : {time.perf_counter() - debut:.1f} s")'],
+    ["r4", 'for nom in SOURCES:'],
+    ["r5", '    await interroger({"source": nom, "question": QUESTION})'],
+    ["r6", 'print(f"Séquentiel : {time.perf_counter() - debut:.1f} s")'],
+  ]},
+  src: {t: "Les trois sources", l: () => [
+    ["k1", 'async def source_kb(question: str) -> str:'],
+    ["k2", '    await asyncio.sleep(1.0)'],
+    ["k3", '    return await asyncio.to_thread(lambda: kb.formater(kb.rechercher(question, k=2)))'],
+    ["k4", 'async def source_supervision(question: str) -> str:'],
+    ["k5", '    return await RESEAU.ping(hote)        # RESEAU.configurer(latence_s=1.0)'],
+    ["k6", 'async def source_tickets(question: str) -> str:'],
+    ["k7", '    await asyncio.sleep(1.0)'],
+  ]},
+  llm: {t: "Section 4 · trois résumés LLM", l: () => [
+    ["l1", 'async def resumer(texte: str) -> str:'],
+    ["l2", '    reponse = await llm.ainvoke(f"Résume en une phrase, en français : {texte}")'],
+    ["l3", 'for e in extraits:                                        # séquentiel'],
+    ["l4", '    await resumer(e)'],
+    ["l5", 'await asyncio.gather(*(resumer(e) for e in extraits))    # parallèle'],
+  ]},
+  diag: {t: "Section 5 · le map-reduce complet", l: () => [
+    ["d1", 'async def synthetiser(state: EtatDiagnostic) -> dict:'],
+    ["d2", '    constats = "\\n".join(state["constats"])'],
+    ["d3", '    reponse = await llm.ainvoke("Tu es l\'agent support N1 de NordTech. … Constats :\\n{constats}")'],
+    ["d4", '    return {"synthese": reponse.content}'],
+    ["d5", 'b.add_conditional_edges(START, repartir, ["interroger"])'],
+    ["d6", 'b.add_edge("interroger", "synthetiser")   # le nœud de synthèse attend TOUTES les branches'],
+    ["d7", 'b.add_edge("synthetiser", END)'],
+  ]},
+  sweep: {t: "Section 6 · borner le parallélisme", l: c => [
+    ["w1", c.n === 8 ? 'SERVEURS = ["srv-mail-01", "srv-erp-02", "srv-vpn-01", "srv-fichiers-03"] * 2   # 8 vérifications'
+         : c.n === 4 ? 'SERVEURS = ["srv-mail-01", "srv-erp-02", "srv-vpn-01", "srv-fichiers-03"]   # 4 vérifications'
+         :             'SERVEURS = ["srv-mail-01", "srv-erp-02"]   # 2 vérifications'],
+    ["w2", 'async def pinger(mission: dict) -> dict:'],
+    ["w3", '    return {"resultats": [await RESEAU.ping(mission["hote"])]}   # latence_s=0.5'],
+    ["w4", 'b.add_conditional_edges(START, lambda s: [Send("pinger", {"hote": h}) for h in SERVEURS], ["pinger"])'],
+    ["w5", `for limite in (None, ${c.limit}):`],
+    ["w6", '    await balayage.ainvoke({"resultats": []}, config={"max_concurrency": limite} if limite else {})'],
+  ]},
+};
+
+/* ---------- les phases ---------- */
+const PH = {av:"Avant", map:"Répartir", par:"En parallèle", red:"Fusionner", llm:"LLM et synthèse", lim:"Borner", fin:"Bilan"};
+const SEGOF = {av:0, map:0, par:1, red:2, llm:3, lim:4, fin:4};
+const PHASE = ["av","map","map","par","par","par","par","red","red","llm","llm","llm","llm","lim","lim","fin"];
+const COLS = [15, 25, 18, 24, 18];
+const MARK = (() => {
+  const tot = COLS.reduce((a, b) => a + b, 0), starts = []; let acc = 0;
+  COLS.forEach(w => { starts.push(acc / tot * 100); acc += w; });
+  return PHASE.map((p, i) => {
+    const sg = SEGOF[p], same = PHASE.map((q, j) => SEGOF[q] === sg ? j : -1).filter(j => j >= 0);
+    const k = same.indexOf(i);
+    return starts[sg] + (k + 0.5) / same.length * (COLS[sg] / tot * 100);
+  });
+})();
+
+/* ---------- le modèle ---------- */
+function initial(){
+  return {
+    scene: "enquete", inst: 0, br: ["idle","idle","idle"], upd: [false,false,false],
+    edgeIn: null, edgeOut: null, startSt: "idle", endSt: "idle", synth: false, synthSt: "idle",
+    sends: false, constats: [], synthese: null, barrier: false, fusion: null,
+    now: null, showSeq: false, showSynthBar: false, llmStage: 0, sweepStage: 0, gdim: false,
+    term: [], pill: "idle", chrono: "0,0 s", chronoLbl: "Chrono", gap: "",
+  };
+}
+function resetTransient(s){
+  s.code = []; s.codeCls = "hl"; s.codeB = "run"; s.codeBl = []; s.codeBCls = "hl"; s.skip = [];
+  s.note = null; s.blocked = false; s.choicesR = false; s.choicesS = false; s.running = false;
+  if (s.edgeIn === "on") s.edgeIn = "trail";
+  if (s.edgeOut === "on") s.edgeOut = "trail";
+}
+const setBr = (s, f) => { s.br = SRC.map((src, i) => f(src, i)); };
+
+const STEPS = [
+  /* 0 */ (s, c) => {
+    s.choicesR = true; s.code = ["c3"]; s.codeB = "run"; s.codeBl = ["r1"];
+    s.title = "Avant de lancer";
+    s.text = "HelpDesk-Ops reçoit une demande : « srv-erp-02 est très lent depuis ce matin pour toute la compta ». Pour qualifier l'incident, il interroge trois sources : la KB, la supervision et l'historique des tickets. Chaque source met environ 1 seconde à répondre. L'état part avec <code>constats = []</code>.";
+    s.note = {cls:"h", h: c.reducer
+      ? "La clé <code>constats</code> a un <b>reducer</b> : <code>operator.add</code>. Vous pouvez l'enlever avec le choix ci-dessus et voir ce qui change à l'étape 7."
+      : "Vous avez retiré le reducer : <code>constats</code> est une simple <code>list[str]</code>. Avancez jusqu'à l'étape 7 pour voir la conséquence."};
+  },
+  /* 1 */ (s, c) => {
+    s.startSt = "done"; s.edgeIn = "on"; s.sends = true; s.choicesR = true; s.running = true; s.pill = "run";
+    s.term.push({c:"cmd", x:'▶ etat = await enquete.ainvoke({"question": QUESTION, "constats": []})'});
+    s.code = ["c7","c8","c12"]; s.codeBl = ["r2"];
+    s.title = "repartir renvoie trois Send";
+    s.text = "Le graphe démarre. L'arête conditionnelle qui part de START appelle <code>repartir(state)</code>. Cette fonction renvoie une <b>liste</b> de trois <code>Send(\"interroger\", ...)</code>, une par source. Chaque Send désigne un nœud et la donnée à lui transmettre. Le nombre de branches se décide ici, à l'exécution.";
+  },
+  /* 2 */ (s, c) => {
+    s.inst = 3; s.choicesR = true; s.running = true;
+    s.code = ["c4","c5","c6","c9"]; s.codeBl = ["r2"];
+    s.title = "Une branche, une charge utile";
+    s.text = "LangGraph crée une tâche <code>interroger</code> par Send. Les trois tâches exécutent le même code, mais chacune reçoit <b>sa</b> charge utile : une <code>Mission</code> avec une source et la question. La branche ne voit pas l'état complet, seulement ce que son Send lui a passé.";
+  },
+  /* 3 */ (s, c) => {
+    setBr(s, () => "on"); s.now = 0; s.chrono = "0,0 s"; s.choicesR = true; s.running = true;
+    s.code = ["c10"]; s.codeCls = "hlp"; s.codeB = "src"; s.codeBl = ["k2","k5","k7"]; s.codeBCls = "hlp";
+    s.title = "Les trois branches démarrent ensemble";
+    s.text = "Les trois tâches appartiennent au <b>même super-step</b>. Les nœuds sont <code>async</code> : LangGraph les lance comme tâches asyncio sur la même boucle d'événements. Avec des nœuds synchrones, il utiliserait un pool de threads. Sur la frise, les trois barres partent de zéro.";
+  },
+  /* 4 */ (s, c) => {
+    setBr(s, () => "on"); s.now = 0.5; s.chrono = "0,5 s"; s.choicesR = true; s.running = true;
+    s.code = ["c10"]; s.codeCls = "hlp"; s.codeB = "src"; s.codeBl = ["k3"]; s.codeBCls = "hll";
+    s.note = {cls:"l", h:"<b>Piège signalé dans le notebook.</b> <code>kb.rechercher</code> est synchrone (calcul des embeddings). Appelé tel quel dans un nœud <code>async</code>, il gèlerait la boucle, et toutes les autres branches avec elle. <code>asyncio.to_thread(...)</code> le déporte dans un thread."};
+    s.title = "Pendant l'attente, la boucle reste libre";
+    s.text = "Chaque branche attend sa réponse avec <code>await</code> : <code>asyncio.sleep</code> ou <code>RESEAU.ping</code>. Pendant qu'une branche attend, la boucle fait avancer les autres. Les trois attentes se recouvrent.";
+  },
+  /* 5 */ (s, c) => {
+    setBr(s, src => src === "kb" ? "on" : "done"); s.upd = [false, true, true];
+    s.now = 1.0; s.chrono = "1,0 s"; s.choicesR = true; s.running = true;
+    s.code = ["c11"]; s.codeCls = "hlp"; s.codeB = "src";
+    s.title = "supervision et tickets ont fini";
+    s.text = "À 1,0 s, deux branches ont fini. Chacune renvoie une mise à jour <code>{\"constats\": [\"...\"]}</code>. LangGraph met ces écritures de côté et ne les applique pas encore à l'état : la branche kb travaille toujours.";
+  },
+  /* 6 */ (s, c) => {
+    setBr(s, () => "done"); s.upd = [true, true, true]; s.barrier = true;
+    s.now = 1.2; s.chrono = "1,2 s"; s.choicesR = true; s.running = true;
+    s.code = ["c11"]; s.codeCls = "hlp"; s.codeB = "src"; s.codeBl = ["k3"]; s.codeBCls = "hlp";
+    s.title = "La plus lente fixe la durée";
+    s.text = "La branche kb finit vers 1,2 s : 1 s d'attente, puis la recherche dans Qdrant (durée illustrative). Le super-step se termine quand <b>toutes</b> ses tâches sont terminées. C'est la barrière : la branche la plus lente fixe la durée de l'étape.";
+  },
+  /* 7 */ (s, c) => {
+    s.now = 1.2; s.chrono = "1,2 s"; s.choicesR = true;
+    if (!c.reducer){
+      s.fusion = "err"; s.edgeOut = "err"; s.pill = "dead";
+      s.term.push({c:"bad", x:"---------------------------------------------------------------------------"});
+      s.term.push({c:"bad", x:"InvalidUpdateError                        Traceback (most recent call last)"});
+      s.term.push({c:"sys", x:"…"});
+      s.term.push({c:"bad", x:"InvalidUpdateError: At key 'constats': Can receive only one value per step. Use an Annotated key to handle multiple values."});
+      s.term.push({c:"bad", x:"For troubleshooting, visit: https://docs.langchain.com/oss/python/langgraph/errors/INVALID_CONCURRENT_GRAPH_UPDATE"});
+      s.code = ["c3"]; s.codeCls = "hle"; s.codeBl = ["r2"]; s.codeBCls = "hle"; s.blocked = true;
+      s.note = {cls:"e", h:"Une clé sans reducer devient un canal <code>LastValue</code>. Il accepte une seule valeur par super-step. Ici, il en reçoit trois."};
+      s.title = "Sans reducer : InvalidUpdateError";
+      s.text = "Ici <code>constats</code> est déclaré <code>list[str]</code>, sans reducer. Une telle clé accepte <b>une seule valeur par super-step</b> et en reçoit trois. LangGraph lève <code>InvalidUpdateError</code> au moment de la fusion, après que les trois branches ont fait tout leur travail. <b>Rebasculez sur « avec reducer » pour continuer.</b>";
+      return;
+    }
+    s.fusion = "ok"; s.constats = SRC.map(CONSTAT); s.edgeOut = "on"; s.endSt = "done"; s.running = true;
+    s.code = ["c3"]; s.codeCls = "hlh"; s.codeBl = ["r2"];
+    s.note = {cls:"h", h:"LangGraph trie les écritures par chemin de tâche avant de les appliquer. Les Send étant numérotés dans l'ordre de la liste, <code>constats</code> suit l'ordre de <code>SOURCES</code>, quelle que soit la branche arrivée la première."};
+    s.title = "operator.add fusionne les trois listes";
+    s.text = "Le super-step fini, LangGraph applique les trois écritures à la clé <code>constats</code>. Son reducer <code>operator.add</code> concatène : <code>[] + [kb] + [supervision] + [tickets]</code>. L'ordre suit celui des Send dans la liste. kb est arrivée en dernier, elle reste en tête.";
+  },
+  /* 8 */ (s, c) => {
+    s.showSeq = true; s.now = null; s.chrono = "1,2 s"; s.gap = "contre 3,2 s"; s.pill = "dead";
+    s.term.push({x:"Parallèle  : 1.2 s"});
+    s.constats.forEach(k => s.term.push({x:"   " + k.slice(0, 110)}));
+    s.term.push({x:"Séquentiel : 3.2 s"});
+    s.code = []; s.codeBl = ["r3","r4","r5","r6"];
+    s.title = "ainvoke rend l'état, on compare";
+    s.text = "<code>ainvoke</code> renvoie l'état final avec ses trois constats. La cellule refait ensuite les trois appels l'un après l'autre, dans une boucle <code>for</code>. Le notebook annonce environ 1 s en parallèle contre environ 3 s en séquentiel. C'est le cas idéal du parallélisme : des tâches qui <b>attendent</b> le réseau ou le disque.";
+  },
+  /* 9 */ (s, c) => {
+    s.scene = "llm"; s.gdim = true; s.llmStage = 1; s.running = true; s.pill = "run";
+    s.chronoLbl = "Gain"; s.chrono = "×1,5–1,7"; s.gap = "contre ×3";
+    s.term.push({c:"sys", x:"── cellule suivante : trois résumés LLM ──"});
+    s.term.push({c:"cmd", x:"▶ résumés en séquence, puis asyncio.gather(...)"});
+    s.codeB = "llm"; s.codeBl = ["l2","l3","l4","l5"]; s.codeBCls = "hll";
+    s.title = "Et si chaque branche appelait le LLM ?";
+    s.text = "Section 4 du notebook : trois résumés LLM, d'abord en séquence, puis lancés ensemble avec <code>asyncio.gather</code>. Pendant la préparation, avec Ollama sur CPU, le gain mesuré était de ×1,5 à ×1,7, contre ×3 pour les sources. Les requêtes partent ensemble mais se partagent le même serveur : chacune <b>s'étire</b>.";
+  },
+  /* 10 */ (s, c) => {
+    s.scene = "llm"; s.gdim = true; s.llmStage = 2; s.pill = "dead";
+    s.chronoLbl = "Gain"; s.chrono = "×1,5–1,7"; s.gap = "contre ×3";
+    s.term.push({x:"3 résumés LLM : séquentiel S s · parallèle P s · gain ×S/P"});
+    s.term.push({c:"sys", x:"(S et P dépendent du poste : ×1,5 à ×1,7 mesuré en préparation avec Ollama sur CPU ; avec vLLM sur GPU, mesurez)"});
+    s.codeB = "llm"; s.codeBl = ["l5"]; s.codeBCls = "hll";
+    s.note = {cls:"l", h:"Phrase du notebook : « Le graphe est parallèle ; le serveur l'est plus ou moins. Seule la mesure le dit. » Comparez les deux tags dans le Gantt de Langfuse."};
+    s.title = "Un GPU, un seul serveur";
+    s.text = "vLLM regroupe les requêtes simultanées dans les mêmes passes sur le GPU (<i>continuous batching</i>, jusqu'à <code>--max-num-seqs=16</code> pour l'agent). Ollama en traite plusieurs selon <code>OLLAMA_NUM_PARALLEL</code> et la mémoire disponible, les autres attendent leur tour. Conséquence d'architecture : on parallélise les <b>sources</b>, et on garde <b>un</b> appel LLM de synthèse à la fin.";
+  },
+  /* 11 */ (s, c) => {
+    s.scene = "diag"; s.gdim = false; s.synth = true; s.synthSt = "on"; s.showSeq = false; s.showSynthBar = true;
+    s.constats = SRC.map(CONSTAT); s.endSt = "idle"; s.edgeOut = "on"; s.now = 1.2;
+    s.running = true; s.pill = "run"; s.chronoLbl = "Chrono"; s.chrono = "1,2 s"; s.gap = "+ LLM";
+    s.term.push({c:"sys", x:"── cellule suivante : le map-reduce complet ──"});
+    s.term.push({c:"cmd", x:'▶ etat = await diagnostic.ainvoke({"question": QUESTION, "constats": []}, config=…)'});
+    s.codeB = "diag"; s.codeBl = ["d6","d1","d2"]; s.codeBCls = "hlh";
+    s.title = "synthetiser attend toutes les branches";
+    s.text = "Section 5 : on ajoute le nœud <code>synthetiser</code> et l'arête <code>add_edge(\"interroger\", \"synthetiser\")</code>. Les trois branches rejouent leur travail en parallèle. <code>synthetiser</code> ne démarre qu'au super-step suivant, une fois les trois finies, et ne s'exécute qu'<b>une fois</b>. Il lit les trois constats déjà fusionnés.";
+  },
+  /* 12 */ (s, c) => {
+    s.scene = "diag"; s.synth = true; s.synthSt = "done"; s.endSt = "done"; s.showSynthBar = true; s.now = null;
+    s.constats = SRC.map(CONSTAT);
+    s.synthese = "srv-erp-02 ne répond plus au ping [supervision]. Deux tickets récents signalent des lenteurs et des déconnexions [tickets]. …";
+    s.pill = "dead"; s.chrono = "1,2 s"; s.gap = "+ LLM";
+    s.term.push({x:"⏱ N s"});
+    s.term.push({x:"🤖 " + s.synthese});
+    s.term.push({c:"sys", x:"(N dépend du serveur LLM ; le texte est un exemple, il varie d'un modèle à l'autre)"});
+    s.codeB = "diag"; s.codeBl = ["d3","d4","d7"]; s.codeBCls = "hll";
+    s.title = "Une seule génération LLM";
+    s.text = "<code>synthetiser</code> envoie un seul prompt au LLM, avec la demande et les trois constats. La réponse va dans la clé <code>synthese</code>, puis le graphe atteint END. Dans Langfuse, la trace <code>map-reduce</code> montre les trois <code>interroger</code> côte à côte dans le Gantt, puis une seule generation.";
+  },
+  /* 13 */ (s, c) => {
+    s.scene = "sweep"; s.synth = false; s.sweepStage = 1; s.startSt = "done"; s.edgeIn = "trail"; s.edgeOut = "trail"; s.endSt = "done";
+    s.barrier = true; s.choicesS = true; s.pill = "run";
+    s.chronoLbl = "Chrono"; s.chrono = "0,5 s"; s.gap = "sans limite";
+    s.term.push({c:"sys", x:"── cellule suivante : borner le parallélisme ──"});
+    s.term.push({x:`max_concurrency=None  → 0.5 s pour ${c.n} pings de 0,5 s`});
+    s.codeB = "sweep"; s.codeBl = ["w1","w4"]; s.codeBCls = "hl";
+    s.title = "Cent tickets, cent branches";
+    s.text = `Section 6 : un balayage de ${c.n} serveurs, un Send par serveur, chaque ping dure 0,5 s. Sans limite, toutes les branches partent ensemble : environ 0,5 s au total. Avec cent tickets, ce serait cent requêtes d'un coup vers la supervision ou le serveur de modèles. Changez le nombre de serveurs ci-dessous.`;
+  },
+  /* 14 */ (s, c) => {
+    const vagues = Math.ceil(c.n / c.limit), t = vagues * 0.5;
+    s.scene = "sweep"; s.sweepStage = 2; s.startSt = "done"; s.edgeIn = "trail"; s.edgeOut = "trail"; s.endSt = "done";
+    s.barrier = true; s.choicesS = true; s.pill = "dead";
+    s.chrono = fr(t) + " s"; s.gap = `limite ${c.limit}`;
+    s.term.push({x:`max_concurrency=${String(c.limit).padEnd(5)} → ${t.toFixed(1)} s pour ${c.n} pings de 0,5 s`});
+    s.codeB = "sweep"; s.codeBl = ["w5","w6"]; s.codeBCls = "hl";
+    s.note = {cls:"", h:"En async, LangGraph enveloppe chaque tâche dans un <code>asyncio.Semaphore(max_concurrency)</code>. En sync, <code>max_concurrency</code> fixe la taille du pool de threads."};
+    s.title = "max_concurrency borne le parallélisme";
+    s.text = `<code>config={"max_concurrency": ${c.limit}}</code> plafonne le nombre de branches simultanées. Avec ${c.n} pings et une limite de ${c.limit}, on obtient ${vagues} vague${vagues > 1 ? "s" : ""} de 0,5 s, soit environ ${fr(t)} s. On choisit la limite selon ce que la <b>cible</b> supporte. OWASP ASI08 : un fan-out non borné transforme une demande en tempête de requêtes.`;
+  },
+  /* 15 */ (s, c) => {
+    s.scene = "diag"; s.synth = true; s.synthSt = "done"; s.endSt = "done"; s.edgeIn = "trail"; s.edgeOut = "trail";
+    s.constats = SRC.map(CONSTAT); s.barrier = true; s.showSynthBar = true; s.sweepStage = 0;
+    s.chrono = "1,2 s"; s.gap = "+ LLM";
+    s.codeB = "diag"; s.codeBl = ["d5","d6"];
+    s.title = "Bilan";
+    s.text = "<code>Send</code> répartit : une tâche par élément, chacune avec sa charge utile, toutes dans le même super-step. Le reducer fusionne leurs mises à jour à la fin du super-step. Le nœud suivant attend la plus lente. Le gain est fort quand les branches attendent, plus faible quand elles se partagent un même serveur LLM.";
+  },
+];
+const N = STEPS.length - 1;
+
+/* ---------- état de lecture ---------- */
+const ctx = { reducer: true, n: 8, limit: 2 };
+let idx = 0, prevIdx = -1, playing = false, timer = null, prevModel = null;
+const seen = new Set([0]);
+
+function build(i){
+  const s = initial();
+  for (let k = 0; k <= i; k++){ resetTransient(s); s.phase = PHASE[k]; STEPS[k](s, ctx); if (s.blocked && k < i) return {s, stoppedAt:k}; }
+  return {s, stoppedAt: s.blocked ? i : null};
+}
+
+/* ---------- rendu : le graphe ---------- */
+function renderGraph(s, pm){
+  const W = 360, sy = 26, rowY = 118, bh = 44;
+  let boxes = [];
+  if (s.scene === "sweep"){
+    const hs = hosts(ctx.n);
+    hs.forEach((h, i) => {
+      const r = Math.floor(i / 4), cIdx = i % 4, cnt = Math.min(4, hs.length - r * 4);
+      boxes.push({cx: W / 2 + (cIdx - (cnt - 1) / 2) * 84, y: rowY + r * 62, w: 76, label: "pinger", sub: h.replace("srv-", ""), st: "done"});
+    });
+  } else if (s.inst === 0){
+    boxes = [{cx: 180, y: rowY, w: 130, label: "interroger", sub: "", st: "idle", ghost: s.sends}];
+  } else {
+    boxes = SRC.map((src, i) => ({cx: 62 + i * 118, y: rowY, w: 108, label: "interroger", sub: `source="${src}"`, st: s.br[i]}));
+  }
+  const lastY = Math.max(...boxes.map(b => b.y)) + bh;
+  const barY = lastY + 20;
+  const synY = barY + 46;
+  const endY = s.synth ? synY + 40 + 58 : barY + 70;
+  const H = endY + 24;
+  const tgtY = s.synth ? synY - 3 : endY - 15;
+  const freshInst = pm && (pm.inst !== s.inst || pm.scene !== s.scene) && (s.inst === 3 || s.scene === "sweep");
+  let h = `<defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" style="fill:var(--line-strong)"/></marker>
+    <marker id="arrRun" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" style="fill:var(--run)"/></marker>
+    <marker id="arrErr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" style="fill:var(--err)"/></marker>
+  </defs><g class="${s.gdim ? "gdim" : ""}">`;
+  const inCls = s.edgeIn ? " " + s.edgeIn : "";
+  const outCls = s.edgeOut ? " " + s.edgeOut : "";
+  boxes.forEach(b => {
+    h += `<path class="edge${inCls}" d="M180 ${sy + 10} C180 ${sy + 50}, ${b.cx} ${b.y - 44}, ${b.cx} ${b.y - 3}"/>`;
+    h += `<path class="edge${outCls}" d="M${b.cx} ${b.y + bh} C${b.cx} ${b.y + bh + 40}, 180 ${tgtY - 46}, 180 ${tgtY}"/>`;
+  });
+  if (s.synth) h += `<path class="edge${s.endSt === "done" ? " trail" : ""}" d="M180 ${synY + 40} L180 ${endY - 15}"/>`;
+  // étiquettes
+  h += `<text class="elab" x="192" y="${sy + 30}">${s.scene === "sweep" ? "lambda s: [Send(…) …]" : "repartir(state)"}</text>`;
+  if (s.inst === 0 && s.sends) h += `<text class="send-lbl" x="190" y="${rowY - 14}">3 × Send</text>`;
+  if (s.inst === 3 && s.scene !== "sweep" && s.edgeIn) boxes.forEach(b => { h += `<text class="send-lbl" x="${b.cx + (b.cx < 180 ? -36 : b.cx > 180 ? 6 : 6)}" y="${rowY - 14}">Send</text>`; });
+  // barrière
+  if (s.barrier && (s.inst === 3 || s.scene === "sweep")) h += `<line class="barrier" x1="14" y1="${barY}" x2="346" y2="${barY}"/><text class="bar-lbl" x="346" y="${barY - 5}" text-anchor="end">barrière du super-step</text>`;
+  // nœuds
+  h += `<g class="node ${s.startSt}"><circle cx="180" cy="${sy}" r="10"/></g><text class="elab" x="198" y="${sy + 4}">START</text>`;
+  boxes.forEach(b => {
+    const x = b.cx - b.w / 2;
+    h += `<g class="node ${b.st}${b.ghost ? " ghost" : ""}${freshInst ? " gfresh" : ""}"><rect x="${x}" y="${b.y}" width="${b.w}" height="${bh}" rx="8"/>`;
+    h += b.sub
+      ? `<text x="${b.cx}" y="${b.y + 19}" text-anchor="middle" style="font-size:${b.w < 90 ? 11.5 : 12.5}px">${b.label}</text><text class="sub" x="${b.cx}" y="${b.y + 34}" text-anchor="middle">${esc(b.sub)}</text></g>`
+      : `<text x="${b.cx}" y="${b.y + 27}" text-anchor="middle">${b.label}</text></g>`;
+  });
+  if (s.inst === 0) h += `<text class="elab" x="180" y="${rowY + bh + 16}" text-anchor="middle">un seul nœud dans le dessin du graphe</text>`;
+  if (s.fusion === "err") h += `<g class="errbadge"><circle cx="180" cy="${barY + 24}" r="12"/><text x="180" y="${barY + 29}" text-anchor="middle" style="font-size:15px">!</text></g><text class="elab" x="198" y="${barY + 28}" style="fill:var(--err)">InvalidUpdateError</text>`;
+  if (s.synth) h += `<g class="node ${s.synthSt}${pm && !pm.synth ? " gfresh" : ""}"><rect x="110" y="${synY}" width="140" height="40" rx="8"/><text x="180" y="${synY + 25}" text-anchor="middle">synthetiser</text></g>`;
+  h += `<g class="node ${s.endSt}"><circle cx="180" cy="${endY}" r="12"/></g><text class="elab" x="200" y="${endY + 4}">END</text>`;
+  h += `</g>`;
+  if (s.gdim) h += `<text class="cap" x="180" y="${barY + 10}" text-anchor="middle">Cette cellule n'utilise pas le graphe :</text><text class="cap" x="180" y="${barY + 26}" text-anchor="middle">trois llm.ainvoke lancés par asyncio.gather</text>`;
+  const svg = $("graph");
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.innerHTML = h;
+}
+
+/* ---------- rendu : l'état et les branches ---------- */
+function renderData(s, pm){
+  let h = "";
+  const nOld = pm ? pm.constats.length : 1e9;
+  if (s.scene === "llm"){
+    h += `<h3 class="sub-h">extraits = etat["constats"]</h3><ol class="clist">` + SRC.map(src => `<li class="mono">${esc(short(CONSTAT(src), 60))}</li>`).join("") + `</ol>`;
+    h += `<div class="blk"><h3 class="sub-h">Trois appels au même serveur de modèles</h3><div class="brs">` +
+      SRC.map((src, i) => `<div class="br ${s.llmStage === 1 ? "on" : "done"}"><div class="br-h"><b>resumer</b><span class="n">extrait ${i + 1}</span><span class="tag ${s.llmStage === 1 ? "on" : "done"}">${s.llmStage === 1 ? "en file ou en lot" : "terminé"}</span></div></div>`).join("") + `</div></div>`;
+    $("data").innerHTML = h; return;
+  }
+  if (s.scene === "sweep"){
+    const hs = hosts(ctx.n);
+    h += `<h3 class="sub-h">État du graphe · <code>EtatPing</code></h3><dl class="kv"><dt>resultats</dt><dd>${hs.length} résultats, un par branche (operator.add)</dd></dl>`;
+    h += `<div class="blk"><h3 class="sub-h">${hs.length} Send, un par serveur</h3><div class="chips">` + hs.map(x => `<span class="${x === "srv-erp-02" ? "down" : "done"}" title="${esc(PING(x))}">${x}</span>`).join("") + `</div>`;
+    h += `<p class="empty" style="margin:8px 0 0">srv-erp-02 est hors ligne dans l'inventaire : son ping répond « aucune réponse ». Les autres répondent en 3 ms.</p></div>`;
+    $("data").innerHTML = h; return;
+  }
+  h += `<h3 class="sub-h">État du graphe · <code>${s.synth ? "EtatDiagnostic" : "EtatEnquete"}</code></h3><dl class="kv">`;
+  h += `<dt>question</dt><dd>"${esc(QS)}"</dd><dt>constats</dt><dd>`;
+  h += s.constats.length ? `<ol class="clist">` + s.constats.map((k, i) => `<li class="${i >= nOld ? "fresh" : ""}">${esc(short(k, 64))}</li>`).join("") + `</ol>` : "[]";
+  h += `</dd>`;
+  if (s.synth) h += `<dt>synthese</dt><dd class="${s.synthese && pm && !pm.synthese ? "fresh" : ""}">${s.synthese ? '"' + esc(short(s.synthese, 90)) + '"' : "(vide)"}</dd>`;
+  h += `</dl>`;
+  if (s.fusion === "ok" && !s.synth) h += `<div class="fuse${pm && !pm.fusion ? " fresh" : ""}"><b>Fusion par operator.add</b><code>[] + ["[kb …"] + ["[supervision …"] + ["[tickets …"]</code>ordre des Send : kb, supervision, tickets. Ordre d'arrivée : supervision, tickets, kb.</div>`;
+  if (s.fusion === "err") h += `<div class="fuse err${pm && !pm.fusion ? " fresh" : ""}"><b>InvalidUpdateError</b><code>At key 'constats': Can receive only one value per step. Use an Annotated key to handle multiple values.</code>3 valeurs reçues dans le même super-step. L'état n'est pas modifié.</div>`;
+  if (s.inst === 0 && s.sends){
+    h += `<div class="blk"><h3 class="sub-h">Ce que renvoie repartir(state)</h3><div class="sends">` +
+      SRC.map(src => `<div>Send("interroger", {"source": "${src}", "question": "${esc(QS)}"})</div>`).join("") + `</div></div>`;
+  }
+  if (s.inst === 3){
+    const lbl = {idle:"créée", on:"en cours", done:"terminée"};
+    h += `<div class="blk"><h3 class="sub-h">Les branches · une par Send</h3><div class="brs">`;
+    SRC.forEach((src, i) => {
+      const st = s.br[i];
+      const pending = s.upd[i] && !s.fusion && s.scene === "enquete";
+      h += `<div class="br ${st}"><div class="br-h"><b>interroger</b><span class="n">Send n°${i + 1}</span><span class="tag ${pending ? "wait" : st}">${pending ? "écriture en attente" : lbl[st]}</span></div>`;
+      h += `<div class="br-io"><span>reçoit</span><code>{"source": "${src}", "question": "${esc(QS)}"}</code>`;
+      if (s.upd[i]) h += `<span>renvoie</span><code class="${pm && !pm.upd[i] ? "fresh" : ""}">{"constats": ["${esc(short(CONSTAT(src), 46))}"]}</code>`;
+      h += `</div></div>`;
+    });
+    h += `</div></div>`;
+  }
+  $("data").innerHTML = h;
+}
+
+/* ---------- rendu : le code ---------- */
+function renderCode(s){
+  const paint = (lines, hl, cls, skip) => lines.map(([id, t]) => {
+    let k = "ln"; if (hl.includes(id)) k += " " + cls; else if (skip.includes(id)) k += " skip";
+    return `<span class="${k}">${hlCode(t)}</span>`;
+  }).join("");
+  $("codeMain").innerHTML = paint(codeMain(ctx), s.code, s.codeCls, s.skip);
+  const B = CODE_B[s.codeB];
+  $("codeBTitle").textContent = B.t;
+  $("codeB").innerHTML = paint(B.l(ctx), s.codeBl, s.codeBCls, []);
+  $("note").innerHTML = s.note ? `<div class="note ${s.note.cls}">${s.note.h}</div>` : "";
+}
+
+/* ---------- rendu : la frise ---------- */
+function friseModel(s){
+  if (s.scene === "llm"){
+    const seq = {title: "Séquentiel · for e in extraits", rows: [{label: "résumés", segs: [0,1,2].map(i => ({a:i, b:i + 1, cls:"c" + (i + 1), txt:"résumé " + (i + 1)}))}]};
+    const par = {title: "Parallèle · asyncio.gather", rows: [0,1,2].map(i => ({label: "résumé " + (i + 1), segs: [{a:0, b:1.8, cls:"llm", txt:"s'étire"}]}))};
+    return {max: 3.3, step: 1, unit: "T", groups: s.llmStage === 1 ? [seq, par] : [seq, par], lines: [{x:1, txt:"1 résumé seul", right:false}, {x:1.8, txt:"fin du gather", right:false}],
+      note: "T = durée d'un résumé seul. Valeurs relatives et illustratives, calées sur le gain ×1,5 à ×1,7 mesuré en préparation (Ollama sur CPU)."};
+  }
+  if (s.scene === "sweep"){
+    const hs = hosts(ctx.n), L = ctx.limit, total = Math.ceil(hs.length / L) * 0.5;
+    const thin = hs.length > 4;
+    const g1 = {title: "max_concurrency=None", rows: hs.map((x, i) => ({label: x.replace("srv-", ""), thin, segs: [{a:0, b:0.5, cls: x === "srv-erp-02" ? "c3" : "c2", txt:"ping"}]}))};
+    const g2 = {title: `max_concurrency=${L}`, rows: hs.map((x, i) => { const a = Math.floor(i / L) * 0.5; return {label: x.replace("srv-", ""), thin, segs: [{a, b:a + 0.5, cls: x === "srv-erp-02" ? "c3" : "c2", txt:"ping"}]}; })};
+    const lines = [{x:0.5, txt:"sans limite : 0,5 s", right:false}];
+    if (s.sweepStage === 2 && total > 0.5) lines.push({x: total, txt: `limite ${L} : ${fr(total)} s`, right:true});
+    return {max: Math.max(2, total) + 0.25, step: 0.5, unit: "s", groups: s.sweepStage === 2 ? [g1, g2] : [g1], lines,
+      note: "Pings simulés par RESEAU.ping avec latence_s=0.5. Durées théoriques : le notebook annonce ~0,5 s sans limite et ~2 s avec max_concurrency=2 pour 8 pings."};
+  }
+  // enquete / diag
+  const end = src => s.now == null ? FIN[src] : Math.min(FIN[src], s.now);
+  const started = s.now != null || s.br.some(b => b !== "idle") || s.fusion || s.scene === "diag";
+  if (!started) return null;
+  const par = {title: s.scene === "diag" ? "Le graphe diagnostic (ainvoke)" : "Parallèle · le graphe (ainvoke)", rows: SRC.map((src, i) => ({label: src, segs: [{a:0, b:end(src), cls:"c" + (i + 1), txt: src === "kb" ? "1 s + recherche" : "attente 1 s"}]}))};
+  if (s.showSynthBar) par.rows.push({label: "synthetiser", segs: [{a:1.2, b:3.5, cls:"llm open", txt:"LLM : durée selon le serveur"}]});
+  const groups = [par];
+  if (s.showSeq) groups.push({title: "Séquentiel · boucle for", rows: [{label: "for nom in …", segs: [{a:0, b:1.2, cls:"c1", txt:"kb"}, {a:1.2, b:2.2, cls:"c2", txt:"supervision"}, {a:2.2, b:3.2, cls:"c3", txt:"tickets"}]}]});
+  const lines = [];
+  if (s.barrier) lines.push({x:1.2, txt:"barrière", right:false});
+  if (s.now != null && !s.barrier) lines.push({x:s.now, txt:"maintenant", now:true, right:false});
+  return {max: 3.5, step: 0.5, unit: "s", groups, lines,
+    note: s.showSeq ? "Le notebook annonce ~1 s en parallèle contre ~3 s en séquentiel. La barre kb (1 s + recherche Qdrant) est illustrative." : "Durées des sources : 1 s simulée chacune (asyncio.sleep, RESEAU.ping). La recherche kb s'ajoute, durée illustrative."};
+}
+let prevBars = {};
+function renderFrise(s, forward){
+  const m = friseModel(s);
+  if (!m){ $("frise").innerHTML = `<p class="fempty">Rien n'a encore démarré. Les barres apparaîtront quand les branches tourneront.</p>`; prevBars = {}; return; }
+  const pct = x => (x / m.max * 100).toFixed(3) + "%";
+  const bars = {};
+  let h = `<div class="fbody">`;
+  m.groups.forEach((g, gi) => {
+    h += `<div class="fgrp"><div class="fgrp-t">${esc(g.title)}</div>`;
+    g.rows.forEach((r, ri) => {
+      h += `<div class="frow${r.thin ? " thin" : ""}"><span class="lab" title="${esc(r.label)}">${esc(r.label)}</span><div class="track">`;
+      r.segs.forEach((sg, si) => {
+        const w = Math.max(0, sg.b - sg.a); if (w <= 0) return;
+        const key = `${s.scene}|${gi}|${ri}|${si}`; bars[key] = w;
+        const old = prevBars[key];
+        let cls = "bar " + sg.cls, style = `left:${pct(sg.a)};width:${pct(w)}`;
+        if (forward && (old == null || old < w)){ cls += " grow"; style += `;--r:${old ? (old / w).toFixed(3) : 0}`; }
+        h += `<div class="${cls}" style="${style}">${esc(sg.txt)}</div>`;
+      });
+      h += `</div></div>`;
+    });
+    h += `</div>`;
+  });
+  h += `<div class="fov">` + m.lines.map(l => `<div class="vline${l.now ? " now" : ""}${l.right ? " right" : ""}" style="left:${pct(l.x)}"><span>${esc(l.txt)}</span></div>`).join("") + `</div></div>`;
+  let ticks = "";
+  for (let x = 0; x <= m.max + 1e-9; x += m.step) ticks += `<span style="left:${pct(x)}">${m.unit === "T" ? (x === 0 ? "0" : fr(x).replace(",0", "") + " T") : fr(x).replace(",0", "") + " s"}</span>`;
+  h += `<div class="axis"><span class="unit">temps</span><div class="ticks">${ticks}</div></div>`;
+  h += `<p class="fnote">${esc(m.note)}</p>`;
+  $("frise").innerHTML = h;
+  prevBars = bars;
+}
+
+/* ---------- rendu : la sortie ---------- */
+function renderTerm(s, freshFrom){
+  const pill = $("pill");
+  pill.className = "pill" + (s.pill === "run" ? " run" : s.pill === "dead" ? " dead" : "");
+  pill.textContent = s.pill === "run" ? "cellule en cours" : s.pill === "dead" ? "cellule terminée" : "pas lancé";
+  let h = s.term.map((l, i) => `<div class="${l.c || ""}${i >= freshFrom ? " fresh" : ""}">${esc(l.x)}</div>`).join("");
+  if (s.running) h += `<div class="spin">   await en cours, la cellule attend</div>`;
+  if (!s.term.length) h = `<div class="sys">La cellule n'a pas encore été exécutée.</div>`;
+  $("tb").innerHTML = h;
+}
+
+/* ---------- rendu global ---------- */
+function render(){
+  let {s, stoppedAt} = build(idx);
+  if (stoppedAt != null && stoppedAt < idx){ idx = stoppedAt; prevIdx = -2; }
+  const forward = idx === prevIdx + 1;
+  const pm = forward ? prevModel : null;
+
+  $("stepno").textContent = `Étape ${idx} / ${N}`;
+  const chip = $("phasechip"); chip.className = "phase-chip " + PHASE[idx]; chip.textContent = PH[PHASE[idx]];
+  $("captitle").textContent = s.title;
+  $("captext").innerHTML = s.text;
+  $("choicesR").hidden = !s.choicesR;
+  $("choicesS").hidden = !s.choicesS;
+  $("rOn").setAttribute("aria-pressed", ctx.reducer);
+  $("rOff").setAttribute("aria-pressed", !ctx.reducer);
+  $("nBtns").querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", +b.dataset.n === ctx.n));
+  $("lBtns").querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", +b.dataset.l === ctx.limit));
+
+  $("marker").style.left = `calc(${MARK[idx].toFixed(2)}% - 1.5px)`;
+  const sg = SEGOF[PHASE[idx]];
+  for (let k = 0; k < 5; k++) $("sg" + k).classList.toggle("dim", k !== sg);
+
+  $("clocklbl").textContent = s.chronoLbl;
+  $("clock").textContent = s.chrono;
+  $("clockgap").textContent = s.gap;
+  $("friseph").textContent = s.scene === "llm" ? "Temps relatif. Une ligne par appel au LLM." : s.scene === "sweep" ? "Le temps passe de gauche à droite. Une ligne par ping." : "Le temps passe de gauche à droite. Une ligne par branche.";
+
+  renderGraph(s, pm);
+  renderData(s, pm);
+  renderCode(s);
+  renderFrise(s, forward);
+  renderTerm(s, pm ? pm.term.length : 1e9);
+
+  const blocked = stoppedAt != null;
+  $("bPrev").disabled = idx === 0;
+  $("bNext").disabled = idx === N || blocked;
+  $("bPlay").disabled = idx === N || blocked;
+  seen.add(idx);
+  $("dots").querySelectorAll(".dot").forEach((d, i) => {
+    d.classList.toggle("cur", i === idx);
+    d.classList.toggle("seen", seen.has(i));
+    d.disabled = blocked && i > idx;
+  });
+  if ((idx === N || blocked) && playing) stop();
+  prevModel = s; prevIdx = idx;
+}
+
+/* ---------- commandes ---------- */
+const DUR = i => i === 0 ? 5000 : i === 7 ? 9000 : i === 8 ? 8500 : i === 10 ? 9000 : i === 11 ? 8000 : i === 14 ? 8000 : 6500;
+function go(i){ idx = Math.max(0, Math.min(N, i)); render(); if (playing) schedule(); }
+function schedule(){ clearTimeout(timer); timer = setTimeout(() => { if (idx < N && !$("bNext").disabled) { idx++; render(); if (playing) schedule(); } else stop(); }, DUR(idx)); }
+function play(){ if (idx === N || $("bPlay").disabled) return; playing = true; $("bPlay").textContent = "❚❚ Pause"; schedule(); }
+function stop(){ playing = false; clearTimeout(timer); $("bPlay").textContent = "▶ Lecture"; }
+
+$("dots").innerHTML = PHASE.map((p, i) => `<button class="dot ${p}" aria-label="Aller à l'étape ${i}" data-i="${i}"></button>`).join("");
+$("dots").addEventListener("click", e => { const b = e.target.closest(".dot"); if (b && !b.disabled){ stop(); prevIdx = -2; go(+b.dataset.i); } });
+$("bNext").onclick = () => { stop(); go(idx + 1); };
+$("bPrev").onclick = () => { stop(); prevIdx = -2; go(idx - 1); };
+$("bPlay").onclick = () => playing ? stop() : play();
+$("bReset").onclick = () => { stop(); ctx.reducer = true; ctx.n = 8; ctx.limit = 2; seen.clear(); prevIdx = -2; go(0); };
+const rerender = () => { prevIdx = -2; render(); };
+$("rOn").onclick = () => { ctx.reducer = true; rerender(); };
+$("rOff").onclick = () => { ctx.reducer = false; rerender(); };
+$("nBtns").addEventListener("click", e => { const b = e.target.closest("button"); if (b){ ctx.n = +b.dataset.n; rerender(); } });
+$("lBtns").addEventListener("click", e => { const b = e.target.closest("button"); if (b){ ctx.limit = +b.dataset.l; rerender(); } });
+document.addEventListener("keydown", e => {
+  if (e.target.matches("input,textarea")) return;
+  if (e.key === "ArrowRight" && !$("bNext").disabled){ e.preventDefault(); stop(); go(idx + 1); }
+  else if (e.key === "ArrowLeft" && idx > 0){ e.preventDefault(); stop(); prevIdx = -2; go(idx - 1); }
+  else if (e.key === " " && !e.target.matches("button")){ e.preventDefault(); playing ? stop() : play(); }
+});
+
+render();
+})();
+</script>
+</body></html>

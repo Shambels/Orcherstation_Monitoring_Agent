@@ -1,0 +1,1006 @@
+<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RAG hybride pas à pas</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout : un lecteur pas à pas. En haut la frise (indexation, recherche, réponse), puis la narration,
+   puis trois vues synchronisées (pipeline, données Qdrant, code), puis les classements et le terminal. */
+:root{
+  --bg:#eef1f6; --surface:#ffffff; --surface-2:#e6eaf1; --line:#d2d9e4; --line-strong:#9aa6b8;
+  --fg:#121924; --muted:#576377;
+  --run:#2353cc; --run-soft:#dfe7fb; --on-run:#ffffff;
+  --pause:#a86400; --pause-soft:#fcefd8;
+  --disk:#0b7a68; --disk-soft:#dcf2ed;
+  --human:#b0236a; --human-soft:#f9e1ee;
+  --err:#c42b2b; --err-soft:#fbe3e3;
+  --term-bg:#0d1218; --term-fg:#d9e0ea; --term-muted:#7f8a9b; --term-line:#202a36;
+  --f-display:"IBM Plex Sans Condensed","Arial Narrow",system-ui,sans-serif;
+  --f-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,"Cascadia Mono",Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0c1016; --surface:#141a23; --surface-2:#1b2330; --line:#29323f; --line-strong:#56637a;
+  --fg:#e5eaf2; --muted:#94a1b5;
+  --run:#7aa2ff; --run-soft:#1c2a4a; --on-run:#0b1222;
+  --pause:#f0b03a; --pause-soft:#3a2b10;
+  --disk:#3fc8b0; --disk-soft:#0f2e2a;
+  --human:#f27bb4; --human-soft:#3a1529;
+  --err:#ff7676; --err-soft:#3a1515;
+  --term-bg:#06090d; --term-fg:#d9e0ea; --term-muted:#7f8a9b; --term-line:#1a222d;
+  color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --bg:#0c1016; --surface:#141a23; --surface-2:#1b2330; --line:#29323f; --line-strong:#56637a;
+  --fg:#e5eaf2; --muted:#94a1b5;
+  --run:#7aa2ff; --run-soft:#1c2a4a; --on-run:#0b1222;
+  --pause:#f0b03a; --pause-soft:#3a2b10;
+  --disk:#3fc8b0; --disk-soft:#0f2e2a;
+  --human:#f27bb4; --human-soft:#3a1529;
+  --err:#ff7676; --err-soft:#3a1515;
+  --term-bg:#06090d; --term-fg:#d9e0ea; --term-muted:#7f8a9b; --term-line:#1a222d;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+[hidden]{display:none !important}
+html,body{margin:0}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:15px;line-height:1.5;overflow-x:hidden}
+.app{max-width:1440px;margin:0 auto;padding:20px 16px 48px;display:flex;flex-direction:column;gap:14px}
+code,.mono{font-family:var(--f-mono);font-size:.9em}
+p code,.cap-text code,.lesson code,.dnote code{background:var(--surface-2);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+
+/* En-tête */
+.top{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;justify-content:space-between}
+.top h1{font-family:var(--f-display);font-weight:700;font-size:clamp(26px,3.2vw,38px);line-height:1.05;margin:0;text-wrap:balance;letter-spacing:-.01em}
+.top .sub{color:var(--muted);margin:6px 0 0;max-width:78ch}
+.clock{display:flex;align-items:baseline;gap:12px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px 16px;flex-wrap:wrap}
+.clock .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted)}
+.clock .t{font-family:var(--f-mono);font-size:30px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--disk)}
+.clock .gap{font-size:13px;color:var(--muted);max-width:24ch;line-height:1.3}
+
+/* Frise */
+.timeline{position:relative;display:grid;grid-template-columns:40fr 42fr 18fr;gap:4px;padding-top:4px}
+.seg{border-radius:6px;padding:7px 10px;font-size:12.5px;line-height:1.25;border:1px solid transparent;min-width:0}
+.seg b{display:block;font-family:var(--f-display);font-size:14px;font-weight:600}
+.seg.p1{background:var(--run-soft);border-color:color-mix(in srgb,var(--run) 35%,transparent)}
+.seg.pq{background:var(--disk-soft);border-color:color-mix(in srgb,var(--disk) 40%,transparent)}
+.seg.p2{background:var(--pause-soft);border-color:color-mix(in srgb,var(--pause) 40%,transparent)}
+.seg span{color:var(--muted)}
+.seg.dim{opacity:.45}
+.marker{position:absolute;top:-6px;bottom:-6px;width:3px;background:var(--fg);border-radius:2px;transition:left .5s ease;pointer-events:none}
+.marker::before{content:"";position:absolute;top:-5px;left:-5px;border:6.5px solid transparent;border-top-color:var(--fg)}
+
+/* Narration + commandes */
+.stage{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px;align-items:start;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 20px}
+.cap-step{font-size:12px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);display:flex;gap:10px;align-items:center}
+.phase-chip{font-weight:600;padding:2px 8px;border-radius:99px;letter-spacing:.05em}
+.phase-chip.p0{background:var(--surface-2);color:var(--muted)}
+.phase-chip.p1{background:var(--run-soft);color:var(--run)}
+.phase-chip.pq{background:var(--disk-soft);color:var(--disk)}
+.phase-chip.p2{background:var(--pause-soft);color:var(--pause)}
+.cap-title{font-family:var(--f-display);font-size:clamp(22px,2.4vw,28px);font-weight:700;margin:4px 0 6px;line-height:1.15;text-wrap:balance}
+.cap-text{font-size:16.5px;max-width:80ch;margin:0}
+.cap-text b{font-weight:600}
+.choices{display:flex;flex-wrap:wrap;gap:14px 22px;margin-top:12px;padding:12px 14px;border:1px dashed var(--human);border-radius:10px;background:var(--human-soft)}
+.choices .grp{display:flex;flex-direction:column;gap:6px;min-width:0}
+.choices .grp>span{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--human);font-weight:600}
+.seg-btns{display:flex;gap:6px;flex-wrap:wrap}
+.seg-btns button{font:inherit;font-size:14px;padding:6px 12px;border-radius:7px;border:1px solid var(--line-strong);background:var(--surface);color:var(--fg);cursor:pointer;text-align:left;max-width:100%}
+.seg-btns button small{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.06em;opacity:.75}
+.seg-btns button[aria-pressed="true"]{background:var(--human);border-color:var(--human);color:var(--surface)}
+.controls{display:flex;flex-direction:column;gap:10px;align-items:flex-end}
+.btns{display:flex;gap:6px;flex-wrap:wrap}
+.btn{font:inherit;font-weight:600;font-size:14px;padding:9px 14px;border-radius:8px;border:1px solid var(--line-strong);background:var(--surface);color:var(--fg);cursor:pointer;white-space:nowrap}
+.btn.primary{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.btn:disabled{opacity:.35;cursor:not-allowed}
+.btn:focus-visible,.dot:focus-visible,.seg-btns button:focus-visible{outline:3px solid var(--run);outline-offset:2px}
+.dots{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;max-width:380px}
+.dot{width:17px;height:17px;border-radius:4px;border:1px solid var(--line-strong);background:var(--surface);cursor:pointer;padding:0}
+.dot.p1{border-color:var(--run)} .dot.pq{border-color:var(--disk)} .dot.p2{border-color:var(--pause)}
+.dot.seen.p1{background:var(--run-soft)} .dot.seen.pq{background:var(--disk-soft)} .dot.seen.p2{background:var(--pause-soft)} .dot.seen.p0{background:var(--surface-2)}
+.dot.cur{outline:2px solid var(--fg);outline-offset:1px}
+.hint{font-size:12px;color:var(--muted)}
+
+/* Trois vues */
+.views{display:grid;grid-template-columns:minmax(260px,.8fr) minmax(0,1.15fr) minmax(0,1.25fr);gap:14px;align-items:start}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px;min-width:0}
+.panel h2{font-family:var(--f-display);font-size:15px;font-weight:600;margin:0 0 2px;text-transform:uppercase;letter-spacing:.06em}
+.panel .ph{font-size:12.5px;color:var(--muted);margin:0 0 10px}
+
+/* Pipeline */
+#graph{width:100%;max-width:380px;display:block;margin:0 auto}
+#graph text{font-family:var(--f-mono);font-size:12.5px;fill:var(--fg)}
+#graph text.sub{font-size:10.5px;fill:var(--muted);font-family:var(--f-body)}
+#graph .flab{font-family:var(--f-display);font-size:12px;fill:var(--disk);font-weight:600;letter-spacing:.04em}
+.frame{fill:none;stroke:var(--disk);stroke-width:1.4;stroke-dasharray:5 4;opacity:.8}
+.edge{stroke:var(--line-strong);stroke-width:1.8;fill:none;marker-end:url(#arr)}
+.edge.trail{stroke:var(--run);opacity:.55;marker-end:url(#arrRun)}
+.edge.on{stroke:var(--run);stroke-width:3;opacity:1;stroke-dasharray:7 5;animation:flow .7s linear infinite;marker-end:url(#arrRun)}
+@keyframes flow{to{stroke-dashoffset:-12}}
+.node rect{fill:var(--surface);stroke:var(--line-strong);stroke-width:1.6;transition:fill .3s,stroke .3s,opacity .3s}
+.node.done rect{fill:var(--run-soft);stroke:var(--run)}
+.node.idx rect{fill:var(--surface-2);stroke:var(--line)}
+.node.idx text{opacity:.6}
+.node.on rect{fill:var(--run);stroke:var(--run)}
+.node.on text,.node.on text.sub{fill:var(--on-run)}
+.node.dim{opacity:.35}
+.node.off rect{fill:var(--err-soft);stroke:var(--err);stroke-dasharray:5 4}
+.node.off text{fill:var(--err)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--muted);margin-top:6px;justify-content:center}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:-2px;margin-right:5px;border:1.5px solid}
+.lg-on{background:var(--run);border-color:var(--run)} .lg-done{background:var(--run-soft);border-color:var(--run)} .lg-idx{background:var(--surface-2);border-color:var(--line)}
+
+/* Données */
+.disk-h{display:flex;align-items:center;gap:8px}
+.disk-h svg{flex:none}
+.dbox{border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:8px;min-width:0}
+.dbox h3{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 6px;font-weight:600}
+.dbox.hit{border:2px solid var(--disk);box-shadow:0 0 0 4px var(--disk-soft)}
+.dbox.warn{border:2px solid var(--err);background:var(--err-soft)}
+.raw{margin:0;font-family:var(--f-mono);font-size:12px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere}
+.raw .hd{color:var(--muted)}
+.raw .mk{background:var(--pause-soft);color:var(--fg);border-radius:3px;padding:0 2px}
+.arrow{font-size:12.5px;color:var(--muted);text-align:center;margin:2px 0 8px}
+.kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 12px;font-family:var(--f-mono);font-size:12px}
+.kv dt{color:var(--muted)} .kv dd{margin:0;overflow-wrap:anywhere}
+.kv dd.chg{color:var(--disk);font-weight:600}
+.arts{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:3px 10px;font-size:12px}
+.arts li{display:flex;gap:6px;align-items:baseline;min-width:0;padding:2px 4px;border-radius:5px}
+.arts li b{font-family:var(--f-mono);font-weight:600;flex:none}
+.arts li span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.arts li.int{background:var(--err-soft)}
+.tag{font-size:10.5px;font-weight:600;padding:0 6px;border-radius:99px;text-transform:uppercase;letter-spacing:.04em;flex:none}
+.tag.int{background:var(--err);color:var(--surface)}
+.tag.pub{background:var(--disk-soft);color:var(--disk)}
+.bars{display:flex;align-items:center;gap:0;height:56px;margin:6px 0;overflow:hidden}
+.bars i{flex:1 1 0;min-width:0;background:var(--run);opacity:.75}
+.tbl{width:100%;border-collapse:collapse;font-size:12px;font-family:var(--f-mono)}
+.tbl th{font-family:var(--f-body);font-weight:600;color:var(--muted);text-align:left;font-size:11.5px;border-bottom:1px solid var(--line);padding:3px 6px}
+.tbl td{padding:3px 6px;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
+.tbl tr.mk td{background:var(--pause-soft)}
+.tbl tr.none td{color:var(--muted)}
+.tblwrap{overflow-x:auto}
+.dnote{font-size:12.5px;color:var(--muted);margin:6px 0 0}
+.qcard{font-family:var(--f-display);font-size:19px;font-weight:600;border-left:4px solid var(--human);padding:4px 10px;margin-bottom:8px;overflow-wrap:anywhere}
+.excl{text-decoration:line-through;opacity:.6}
+.ans{font-size:14.5px;line-height:1.55}
+.ans .ref{font-family:var(--f-mono);font-size:12px;background:var(--disk-soft);color:var(--disk);border-radius:4px;padding:0 4px;font-weight:600}
+.ans .ref.int{background:var(--err);color:var(--surface)}
+.verdict{display:inline-block;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;padding:2px 9px;border-radius:99px;margin-bottom:6px}
+.verdict.good{background:var(--disk-soft);color:var(--disk)}
+.verdict.bad{background:var(--err-soft);color:var(--err)}
+.verdict.warn{background:var(--pause-soft);color:var(--pause)}
+
+/* Code */
+.code-h{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:10px 0 4px;font-weight:600;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.code-h:first-of-type{margin-top:0}
+.code-h small{text-transform:none;letter-spacing:0;font-weight:400}
+pre.code{margin:0;background:var(--surface-2);border-radius:8px;padding:6px 0;overflow-x:auto;font-family:var(--f-mono);font-size:12px;line-height:1.6}
+pre.code .ln{display:block;padding:0 12px;white-space:pre;border-left:3px solid transparent;transition:background .25s}
+pre.code .ln.hl{background:var(--run-soft);border-left-color:var(--run)}
+pre.code .ln.hlq{background:var(--disk-soft);border-left-color:var(--disk)}
+pre.code .ln.hle{background:var(--err-soft);border-left-color:var(--err)}
+pre.code .ln.skip{opacity:.35}
+.k{color:var(--human)} .s{color:var(--disk)} .f{color:var(--run)} .c{color:var(--muted);font-style:italic}
+.note{margin-top:8px;border-radius:8px;padding:8px 11px;font-size:13.5px;border:1.5px solid var(--run);background:var(--run-soft)}
+.note.q{border-color:var(--disk);background:var(--disk-soft)}
+.note.e{border-color:var(--err);background:var(--err-soft)}
+
+/* Classements + terminal */
+.lower{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:14px;align-items:start}
+.rcols{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.rcol{border:1px solid var(--line);border-radius:9px;padding:8px;min-width:0;transition:opacity .3s}
+.rcol h3{font-family:var(--f-display);font-size:14px;margin:0;font-weight:600}
+.rcol .rsub{font-size:11.5px;color:var(--muted);margin:0 0 6px}
+.rcol.sel{border:2px solid var(--human);box-shadow:0 0 0 4px var(--human-soft)}
+.rcol.fade{opacity:.5}
+.rcol .wait{font-size:12.5px;color:var(--muted);font-style:italic}
+.rlist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:3px}
+.rlist li{display:grid;grid-template-columns:18px minmax(0,1fr) auto;gap:2px 6px;align-items:baseline;font-size:12px;padding:3px 5px;border-radius:5px;background:var(--surface-2)}
+.rlist .rk{font-family:var(--f-mono);color:var(--muted);font-size:11px}
+.rlist .nm{min-width:0;overflow-wrap:anywhere}
+.rlist .nm b{font-family:var(--f-mono);font-weight:600}
+.rlist .sc{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+.rlist .why{grid-column:2 / -1;font-size:10.5px;color:var(--muted)}
+.rlist li.tg{background:var(--disk-soft);outline:1.5px solid var(--disk)}
+.rlist li.bad{background:var(--err-soft);outline:1.5px solid var(--err)}
+.rlist li.kept{box-shadow:inset 4px 0 0 var(--human)}
+.rlist li.dup .nm,.rlist li.dup .sc{text-decoration:line-through;opacity:.55}
+.rlist li.out{opacity:.4}
+.rlist .badge{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;padding:0 5px;border-radius:99px;margin-left:4px}
+.rlist .badge.int{background:var(--err);color:var(--surface)}
+.rlist .badge.keep{background:var(--human);color:var(--surface)}
+.rlist .badge.eq{background:var(--pause-soft);color:var(--pause)}
+.empty{font-size:12.5px;color:var(--muted);font-style:italic;padding:6px 0}
+.foot{font-size:11.5px;color:var(--muted);margin:8px 0 0}
+.term{background:var(--term-bg);color:var(--term-fg);border-radius:12px;overflow:hidden;border:1px solid var(--term-line);min-width:0;display:flex;flex-direction:column}
+.term-h{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 14px;border-bottom:1px solid var(--term-line);font-size:13px}
+.term-h .who{font-weight:600}
+.term-h .who small{font-weight:400;color:var(--term-muted)}
+.pill{font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:99px;text-transform:uppercase;letter-spacing:.05em;background:#222b37;color:var(--term-muted)}
+.pill.run{background:#173a2f;color:#5fe0b5}
+.term-b{padding:10px 14px 14px;font-family:var(--f-mono);font-size:12.4px;line-height:1.6;min-height:220px;max-height:460px;overflow:auto}
+.term-b div{white-space:pre-wrap;overflow-wrap:anywhere}
+.term-b .cmd{color:#9cc2ff}
+.term-b .sys{color:var(--term-muted);font-style:italic}
+.term-b .warn{color:#ffc561}
+.term-b .bad{color:#ff8f8f}
+.term-b .good{color:#78e2bd}
+.term-b .spin{color:var(--term-muted)}
+.term-b .spin::after{content:"";display:inline-block;width:1ch;animation:dots 1.2s steps(4) infinite}
+@keyframes dots{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
+.fresh{animation:fresh .45s ease both}
+@keyframes fresh{from{opacity:0;transform:translateY(5px)}}
+
+/* À retenir */
+.lessons{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+.lesson{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.lesson .n{font-family:var(--f-display);font-weight:700;font-size:13px;color:var(--muted);letter-spacing:.06em}
+.lesson h3{font-family:var(--f-display);font-size:18px;margin:2px 0 6px;line-height:1.2}
+.lesson p{margin:0;font-size:14px;color:var(--muted)}
+.lesson p code{color:var(--fg)}
+.sect-h{font-family:var(--f-display);font-size:20px;font-weight:700;margin:10px 0 0}
+
+@media (max-width:1180px){
+  .views{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  .views .panel.code-p{grid-column:1 / -1}
+  .lower{grid-template-columns:1fr}
+  .lessons{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:760px){
+  .stage{grid-template-columns:1fr;padding:14px}
+  .controls{align-items:stretch}
+  .dots{justify-content:flex-start;max-width:none}
+  .views,.lessons,.rcols{grid-template-columns:1fr}
+  .seg span{display:none}
+  .clock .t{font-size:24px}
+  .btn{padding:8px 10px}
+}
+@media (prefers-reduced-motion:reduce){
+  *{animation:none !important;transition:none !important}
+}
+</style>
+</head>
+<body>
+
+<div class="app">
+  <header class="top">
+    <div>
+      <h1>RAG hybride sur Qdrant, pas à pas</h1>
+      <p class="sub">La base de connaissances de NordTech est indexée deux fois, par le sens et par les mots exacts. Chaque question interroge les deux index, puis Qdrant fusionne les deux classements. Le code est celui de <code>src/helpdesk_ops/kb.py</code>, utilisé par <code>construction/etape_07_rag_specialistes_mcp.py</code> et le notebook J3-02.</p>
+    </div>
+    <div class="clock" aria-label="Points dans la collection Qdrant">
+      <span class="lbl">kb_nordtech</span>
+      <span class="t" id="pts">0</span>
+      <span class="gap" id="ptsSub"></span>
+    </div>
+  </header>
+
+  <div class="timeline" aria-hidden="true">
+    <div class="seg p1" id="seg1"><b>Indexation · une fois</b><span>découper, encoder deux fois, ranger dans Qdrant</span></div>
+    <div class="seg pq" id="seg2"><b>Recherche · à chaque question</b><span>encoder, filtrer, chercher deux fois, fusionner</span></div>
+    <div class="seg p2" id="seg3"><b>Réponse</b><span>passages au LLM, sources citées</span></div>
+    <div class="marker" id="marker"></div>
+  </div>
+
+  <section class="stage" aria-live="polite">
+    <div>
+      <div class="cap-step"><span id="stepno">Étape 0 / 16</span><span class="phase-chip p0" id="phasechip">Avant</span></div>
+      <h2 class="cap-title" id="captitle"></h2>
+      <p class="cap-text" id="captext"></p>
+      <div class="choices" id="choices" hidden>
+        <div class="grp">
+          <span>La question</span>
+          <div class="seg-btns" id="qBtns"></div>
+        </div>
+        <div class="grp">
+          <span>Filtre de payload</span>
+          <div class="seg-btns">
+            <button type="button" id="fOn" aria-pressed="true"><small>par défaut</small>public_seulement=True</button>
+            <button type="button" id="fOff" aria-pressed="false"><small>sans filtre</small>public_seulement=False</button>
+          </div>
+        </div>
+        <div class="grp" id="gMode" hidden>
+          <span>Mode de recherche</span>
+          <div class="seg-btns">
+            <button type="button" data-m="dense" aria-pressed="false"><small>sens</small>mode="dense"</button>
+            <button type="button" data-m="sparse" aria-pressed="false"><small>BM25</small>mode="sparse"</button>
+            <button type="button" data-m="hybrid" aria-pressed="true"><small>par défaut</small>mode="hybrid"</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="controls">
+      <div class="btns">
+        <button class="btn" id="bReset" title="Recommencer">⟲</button>
+        <button class="btn" id="bPrev">◀ Précédent</button>
+        <button class="btn primary" id="bPlay">▶ Lecture</button>
+        <button class="btn" id="bNext">Suivant ▶</button>
+      </div>
+      <div class="dots" id="dots"></div>
+      <div class="hint">Clavier : ← → pour avancer, espace pour lecture/pause</div>
+    </div>
+  </section>
+
+  <div class="views">
+    <section class="panel">
+      <h2>Le pipeline</h2>
+      <p class="ph">En haut l'indexation, en bas la recherche. Le cadre vert se passe dans Qdrant.</p>
+      <svg id="graph" viewBox="0 0 360 544" role="img" aria-label="Pipeline : data/kb, découper, encodeurs dense et BM25, Qdrant (filtre, deux recherches, fusion RRF), top-k, LLM">
+        <defs>
+          <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" style="fill:var(--line-strong)"/></marker>
+          <marker id="arrRun" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" style="fill:var(--run)"/></marker>
+        </defs>
+        <rect class="frame" x="8" y="214" width="344" height="214" rx="12"/>
+        <text class="flab" x="180" y="231" text-anchor="middle">QDRANT · kb_nordtech</text>
+
+        <path class="edge" id="e_kc" d="M95 52 L95 72"/>
+        <path class="edge" id="e_cd" d="M95 114 L95 144"/>
+        <path class="edge" id="e_cb" d="M140 114 L240 144"/>
+        <path class="edge" id="e_qd" d="M220 52 L130 144"/>
+        <path class="edge" id="e_qb" d="M265 52 L265 144"/>
+        <path class="edge" id="e_ds" d="M95 190 L95 236"/>
+        <path class="edge" id="e_bs" d="M265 190 L265 236"/>
+        <path class="edge" id="e_sf" d="M180 272 L180 280"/>
+        <path class="edge" id="e_fd" d="M95 310 L95 320"/>
+        <path class="edge" id="e_fb" d="M265 310 L265 320"/>
+        <path class="edge" id="e_dr" d="M95 360 L150 372"/>
+        <path class="edge" id="e_br" d="M265 360 L210 372"/>
+        <path class="edge" id="e_rt" d="M180 412 L180 444"/>
+        <path class="edge" id="e_tl" d="M180 482 L180 494"/>
+
+        <g class="node" id="n-kb"><rect x="20" y="12" width="150" height="40" rx="8"/><text x="95" y="29" text-anchor="middle">data/kb</text><text class="sub" x="95" y="44" text-anchor="middle">20 articles .md</text></g>
+        <g class="node" id="n-q"><rect x="190" y="12" width="150" height="40" rx="8"/><text x="265" y="29" text-anchor="middle">question</text><text class="sub" id="sub-q" x="265" y="44" text-anchor="middle">rechercher(…, k=3)</text></g>
+        <g class="node" id="n-cut"><rect x="20" y="74" width="150" height="40" rx="8"/><text x="95" y="91" text-anchor="middle">découper</text><text class="sub" x="95" y="106" text-anchor="middle">37 morceaux</text></g>
+        <g class="node" id="n-den"><rect x="20" y="146" width="150" height="44" rx="8"/><text x="95" y="165" text-anchor="middle">dense · MiniLM</text><text class="sub" x="95" y="181" text-anchor="middle">384 nombres (le sens)</text></g>
+        <g class="node" id="n-bm"><rect x="190" y="146" width="150" height="44" rx="8"/><text x="265" y="165" text-anchor="middle">creux · BM25 fr</text><text class="sub" x="265" y="181" text-anchor="middle">racines → poids (les mots)</text></g>
+        <g class="node" id="n-store"><rect x="20" y="238" width="320" height="34" rx="8"/><text x="180" y="253" text-anchor="middle">points</text><text class="sub" id="sub-store" x="180" y="266" text-anchor="middle">2 vecteurs + payload par morceau</text></g>
+        <g class="node" id="n-filt"><rect x="20" y="282" width="320" height="28" rx="8"/><text id="t-filt" x="180" y="300" text-anchor="middle">filtre : metadata.visibilite = public</text></g>
+        <g class="node" id="n-pd"><rect x="20" y="322" width="150" height="38" rx="8"/><text x="95" y="338" text-anchor="middle">recherche dense</text><text class="sub" id="sub-pd" x="95" y="352" text-anchor="middle">Prefetch · limit=9</text></g>
+        <g class="node" id="n-pb"><rect x="190" y="322" width="150" height="38" rx="8"/><text x="265" y="338" text-anchor="middle">recherche BM25</text><text class="sub" id="sub-pb" x="265" y="352" text-anchor="middle">Prefetch · limit=9</text></g>
+        <g class="node" id="n-rrf"><rect x="95" y="374" width="170" height="38" rx="8"/><text x="180" y="390" text-anchor="middle">fusion RRF</text><text class="sub" x="180" y="404" text-anchor="middle">1 / (position + 2)</text></g>
+        <g class="node" id="n-top"><rect x="50" y="446" width="260" height="36" rx="8"/><text x="180" y="462" text-anchor="middle">top-k</text><text class="sub" x="180" y="475" text-anchor="middle">9 morceaux → 3 articles différents</text></g>
+        <g class="node" id="n-llm"><rect x="50" y="496" width="260" height="36" rx="8"/><text x="180" y="512" text-anchor="middle">LLM</text><text class="sub" x="180" y="525" text-anchor="middle">passages [KB-xxx] → réponse sourcée</text></g>
+      </svg>
+      <div class="legend"><span><i class="lg-on"></i>en cours</span><span><i class="lg-done"></i>déjà fait</span><span><i class="lg-idx"></i>fait à l'indexation</span></div>
+    </section>
+
+    <section class="panel">
+      <div class="disk-h">
+        <svg width="22" height="26" viewBox="0 0 22 26" aria-hidden="true"><ellipse cx="11" cy="5" rx="9" ry="3.5" style="fill:var(--disk-soft);stroke:var(--disk)" stroke-width="1.6"/><path d="M2 5v16c0 2 4 3.5 9 3.5s9-1.5 9-3.5V5" style="fill:none;stroke:var(--disk)" stroke-width="1.6"/><path d="M2 13c0 2 4 3.5 9 3.5s9-1.5 9-3.5" style="fill:none;stroke:var(--disk)" stroke-width="1.6"/></svg>
+        <h2>Les données</h2>
+      </div>
+      <p class="ph" id="dataPh">Ce que contient chaque objet à cette étape.</p>
+      <div id="data"></div>
+    </section>
+
+    <section class="panel code-p">
+      <h2>Le code</h2>
+      <p class="ph">La ligne surlignée est celle qui travaille à cette étape.</p>
+      <div class="code-h"><span>src/helpdesk_ops/kb.py · indexation</span></div>
+      <pre class="code" id="codeIdx"></pre>
+      <div class="code-h"><span>src/helpdesk_ops/kb.py · recherche</span></div>
+      <pre class="code" id="codeRech"></pre>
+      <div class="code-h"><span>langchain_qdrant/qdrant.py</span><small>version installée 1.1.0, mode HYBRID</small></div>
+      <pre class="code" id="codeLib"></pre>
+      <div id="note"></div>
+    </section>
+  </div>
+
+  <div class="lower">
+    <section class="panel">
+      <h2>Les classements</h2>
+      <p class="ph">Les 9 morceaux demandés à Qdrant (<code>k * 3</code>), pour la question choisie.</p>
+      <div class="rcols" id="rcols"></div>
+      <p class="foot">Scores mesurés le 09/11/2026 avec les modèles et le découpage du dépôt, dans qdrant-client 1.19 en mode local. Le serveur Qdrant de la salle peut donner des valeurs un peu différentes.</p>
+    </section>
+    <section class="term">
+      <div class="term-h"><span class="who">Terminal <small>poste du formateur</small></span><span class="pill" id="pill">pas lancé</span></div>
+      <div class="term-b" id="tb"></div>
+    </section>
+  </div>
+
+  <h2 class="sect-h">Ce qu'il faut retenir</h2>
+  <div class="lessons">
+    <article class="lesson"><div class="n">1 · DEUX VECTEURS</div><h3>Chaque morceau est rangé deux fois</h3><p>Un vecteur dense de 384 nombres pour le sens (MiniLM multilingue), un vecteur creux BM25 français pour les mots exacts. Avec <code>Modifier.IDF</code>, Qdrant pondère lui-même les mots rares.</p></article>
+    <article class="lesson"><div class="n">2 · LA FUSION</div><h3>RRF additionne des rangs, pas des scores</h3><p>Chaque liste donne <code>1 / (position + 2)</code>. Un morceau bien placé dans les deux listes gagne. Si une liste est vide, l'autre suffit.</p></article>
+    <article class="lesson"><div class="n">3 · LE FILTRE</div><h3>Le code écarte les articles internes</h3><p><code>public_seulement=True</code> pose un filtre sur <code>metadata.visibilite</code>, appliqué dans Qdrant pendant la recherche. KB-019 n'arrive jamais à l'assistant N1.</p></article>
+    <article class="lesson"><div class="n">4 · LE RÉFLEXE</div><h3>Vérifier la recherche avant le LLM</h3><p>Si le bon article n'est pas dans le top-k, aucun prompt ne sauvera la réponse. Et avec un morceau par article, seule la meilleure section passe.</p></article>
+  </div>
+</div>
+
+<script>
+(function(){
+"use strict";
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const D = {"articles":[{"id":"KB-001","titre":"Configurer le client VPN NordTech Connect","cat":"reseau","eq":"N1","vis":"public"},{"id":"KB-002","titre":"Réinitialiser son mot de passe","cat":"acces","eq":"N1","vis":"public"},{"id":"KB-003","titre":"Imprimante bloquée ou file d'impression figée","cat":"materiel","eq":"N1","vis":"public"},{"id":"KB-004","titre":"Outlook plante à l'ouverture d'une pièce jointe","cat":"logiciel","eq":"N1","vis":"public"},{"id":"KB-005","titre":"Wi-Fi des salles de réunion","cat":"reseau","eq":"N1","vis":"public"},{"id":"KB-006","titre":"Écran noir au démarrage","cat":"materiel","eq":"N1","vis":"public"},{"id":"KB-007","titre":"Demander un accès à un dossier partagé","cat":"acces","eq":"N1","vis":"public"},{"id":"KB-008","titre":"Indisponibilité de l'ERP : procédure d'incident majeur","cat":"logiciel","eq":"N1","vis":"public"},{"id":"KB-009","titre":"Teams : pas de son ou micro non détecté","cat":"logiciel","eq":"N1","vis":"public"},{"id":"KB-010","titre":"Erreur 0x80070005 lors d'une mise à jour Windows","cat":"logiciel","eq":"N1","vis":"public"},{"id":"KB-011","titre":"Poste lent","cat":"materiel","eq":"N1","vis":"public"},{"id":"KB-012","titre":"Boîte aux lettres pleine","cat":"logiciel","eq":"N1","vis":"public"},{"id":"KB-013","titre":"MFA : nouveau téléphone ou téléphone perdu","cat":"acces","eq":"N1","vis":"public"},{"id":"KB-014","titre":"Signaler un e-mail suspect (hameçonnage)","cat":"autre","eq":"N1","vis":"public"},{"id":"KB-015","titre":"Quota du serveur de fichiers atteint","cat":"materiel","eq":"N1","vis":"public"},{"id":"KB-016","titre":"Badge d'accès aux bâtiments","cat":"autre","eq":"N1","vis":"public"},{"id":"KB-017","titre":"Nouvel arrivant : kit informatique","cat":"autre","eq":"N1","vis":"public"},{"id":"KB-018","titre":"Supervision : interpréter une alerte ping","cat":"reseau","eq":"N2-infra","vis":"interne"},{"id":"KB-019","titre":"Redémarrer un serveur de production (procédure de changement)","cat":"reseau","eq":"N2-infra","vis":"interne"},{"id":"KB-020","titre":"Conservation des données du support","cat":"autre","eq":"N1","vis":"public"}],"chunks":{"KB-001|Symptômes":"Configurer le client VPN NordTech Connect\n# Configurer le client VPN NordTech Connect  \n## Symptômes\nImpossible d'accéder aux applications internes depuis l'extérieur des locaux, ou message « tunnel non établi ».","KB-001|Procédure":"Configurer le client VPN NordTech Connect\n## Procédure\n1. Installer **NordTech Connect** depuis le Centre logiciel (catégorie Réseau).\n2. Serveur : `vpn.nordtech.example`, profil « Collaborateurs ».\n3. Se connecter avec son compte NordTech, puis valider la notification MFA sur le téléphone.\n4. Si la connexion échoue avec l'erreur 809, vérifier que le réseau de l'hôtel ou du domicile ne bloque pas le port UDP 4500 ; essayer depuis un partage de connexion mobile.","KB-001|Quand ouvrir un ticket":"Configurer le client VPN NordTech Connect\n## Quand ouvrir un ticket\nSi plusieurs collaborateurs ne peuvent plus se connecter en même temps : il s'agit probablement d'un incident sur `srv-vpn-01`, à signaler à la file N2-infra.","KB-002|Procédure":"Réinitialiser son mot de passe\n# Réinitialiser son mot de passe  \n## Procédure\n1. Aller sur le portail self-service `motdepasse.nordtech.example`.\n2. Répondre aux questions de sécurité ou valider le code reçu par SMS.\n3. Choisir un mot de passe d'au moins 14 caractères, différent des 5 précédents.","KB-002|À savoir":"Réinitialiser son mot de passe\n## À savoir\nLe help-desk ne demande **jamais** votre mot de passe, ni par téléphone, ni par e-mail, ni par chat. Toute demande de ce type est une tentative d'hameçonnage (voir KB-014).\nAprès trois échecs, le compte est verrouillé 15 minutes.","KB-003|Procédure":"Imprimante bloquée ou file d'impression figée\n# Imprimante bloquée ou file d'impression figée  \n## Procédure\n1. Éteindre l'imprimante 30 secondes, puis la rallumer.\n2. Vider la file d'impression : Paramètres > Imprimantes > Ouvrir la file d'attente > Annuler tous les documents.\n3. Relancer l'impression.","KB-003|Bourrage papier":"Imprimante bloquée ou file d'impression figée\n## Bourrage papier\nOuvrir le capot indiqué sur l'écran de l'imprimante, retirer la feuille en tirant dans le sens du papier, refermer.\nSi le message persiste après deux tentatives, ouvrir un ticket matériel en précisant le numéro d'inventaire collé sur l'imprimante.","KB-004|Procédure":"Outlook plante à l'ouverture d'une pièce jointe\n# Outlook plante à l'ouverture d'une pièce jointe  \n## Procédure\n1. Fermer Outlook.\n2. Le relancer en mode sans échec : touche Windows + R, puis `outlook.exe /safe`.\n3. Dans Fichier > Options > Compléments, désactiver les compléments COM.\n4. Rouvrir la pièce jointe.","KB-004|Si le problème persiste":"Outlook plante à l'ouverture d'une pièce jointe\n## Si le problème persiste\nEnregistrer la pièce jointe sur le bureau et l'ouvrir depuis l'Explorateur. Une pièce jointe d'un expéditeur inconnu ne s'ouvre pas : la signaler (KB-014).","KB-005|Réseau à utiliser":"Wi-Fi des salles de réunion\n# Wi-Fi des salles de réunion  \n## Réseau à utiliser\nLes salles de réunion utilisent le réseau **NordTech-Meet** (authentification avec le compte NordTech). Le réseau NordTech-Invités est réservé aux visiteurs.","KB-005|Coupures répétées":"Wi-Fi des salles de réunion\n## Coupures répétées\n1. Oublier le réseau NordTech-Meet, puis s'y reconnecter.\n2. Vérifier que le poste n'est pas en mode économie d'énergie Wi-Fi.\n3. Si la coupure touche toute une salle, noter le nom de la salle et l'heure : c'est probablement la borne, ouvrir un ticket réseau pour la file N2-infra.","KB-006|Vérifications":"Écran noir au démarrage\n# Écran noir au démarrage  \n## Vérifications\n1. Vérifier que l'écran est allumé et que le câble vidéo est bien branché des deux côtés.\n2. Sur un portable connecté à une station d'accueil : déconnecter puis reconnecter la station, ou appuyer sur Windows + P et choisir « Dupliquer ».\n3. Maintenir le bouton d'alimentation 10 secondes, puis redémarrer.","KB-006|Ouvrir un ticket":"Écran noir au démarrage\n## Ouvrir un ticket\nSi le poste émet des bips ou si aucun voyant ne s'allume, ouvrir un ticket matériel : un technicien passera avec un poste de remplacement.","KB-007|Procédure":"Demander un accès à un dossier partagé\n# Demander un accès à un dossier partagé  \n## Procédure\nLes droits sur un dossier partagé sont accordés par le **propriétaire du dossier**, pas par le help-desk.\n1. Faire la demande dans le portail « Mes accès » en indiquant le chemin du dossier.\n2. Le propriétaire reçoit la demande et l'approuve ou la refuse.\n3. Les droits sont effectifs dans l'heure (se déconnecter puis se reconnecter si besoin).","KB-007|Accès perdu":"Demander un accès à un dossier partagé\n## Accès perdu\nSi un accès existant a disparu, vérifier d'abord avec son responsable qu'il n'a pas été retiré lors d'un changement de service.","KB-008|Reconnaître un incident majeur":"Indisponibilité de l'ERP : procédure d'incident majeur\n# Indisponibilité de l'ERP : procédure d'incident majeur  \n## Reconnaître un incident majeur\nL'ERP (serveur `srv-erp-02`) est un service de production. S'il est indisponible pour plusieurs utilisateurs (comptabilité, facturation, logistique), c'est un **incident majeur, priorité P1**.","KB-008|Conduite à tenir par le N1":"Indisponibilité de l'ERP : procédure d'incident majeur\n## Conduite à tenir par le N1\n1. Vérifier le statut du serveur et sa joignabilité réseau.\n2. Créer un ticket P1 pour la file N2-applicatif : il doit être **validé par le responsable N2**, qui déclenche l'astreinte.\n3. Ne pas redémarrer le serveur : c'est une opération N2 soumise à la procédure de changement.\n4. Informer les demandeurs qu'un incident est en cours, sans donner de délai.","KB-009|Procédure":"Teams : pas de son ou micro non détecté\n# Teams : pas de son ou micro non détecté  \n## Procédure\n1. Dans Teams, Paramètres > Appareils : choisir le bon haut-parleur et le bon micro.\n2. Faire un appel de test.\n3. Vérifier dans Windows que l'accès au micro est autorisé pour les applications.\n4. Débrancher et rebrancher le casque USB, puis redémarrer Teams.","KB-010|Cause":"Erreur 0x80070005 lors d'une mise à jour Windows\n# Erreur 0x80070005 lors d'une mise à jour Windows  \n## Cause\nLe code 0x80070005 signifie « accès refusé » : la mise à jour n'a pas les droits nécessaires, souvent après une installation interrompue.","KB-010|Procédure":"Erreur 0x80070005 lors d'une mise à jour Windows\n## Procédure\n1. Redémarrer le poste, puis relancer Windows Update.\n2. Si l'erreur persiste, ne pas tenter de modifier les droits système : ouvrir un ticket logiciel en indiquant le code d'erreur exact. Le N2 réinitialisera les composants de mise à jour à distance.","KB-011|Vérifications rapides":"Poste lent\n# Poste lent  \n## Vérifications rapides\n1. Redémarrer le poste (et non une simple mise en veille) : beaucoup de lenteurs disparaissent.\n2. Ouvrir le Gestionnaire des tâches et repérer une application qui consomme plus de 50 % du processeur ou de la mémoire.\n3. Vérifier qu'il reste au moins 10 % d'espace libre sur le disque C:.","KB-011|Ouvrir un ticket":"Poste lent\n## Ouvrir un ticket\nSi la lenteur persiste après redémarrage, préciser depuis quand et avec quelles applications. Un poste de plus de 5 ans peut être éligible au renouvellement.","KB-012|Procédure":"Boîte aux lettres pleine\n# Boîte aux lettres pleine  \n## Procédure\n1. Vider le dossier « Éléments supprimés » et le dossier « Courrier indésirable ».\n2. Trier par taille et archiver les messages avec de grosses pièces jointes dans l'archive en ligne.\n3. Le quota standard est de 50 Go ; une augmentation doit être validée par le responsable.","KB-013|Nouveau téléphone":"MFA : nouveau téléphone ou téléphone perdu\n# MFA : nouveau téléphone ou téléphone perdu  \n## Nouveau téléphone\nEnregistrer le nouveau téléphone dans le portail « Mes méthodes de connexion » **avant** de réinitialiser l'ancien.","KB-013|Téléphone perdu ou volé":"MFA : nouveau téléphone ou téléphone perdu\n## Téléphone perdu ou volé\n1. Appeler le help-desk : l'identité est vérifiée par le responsable hiérarchique.\n2. Le help-desk révoque l'ancienne méthode et délivre un code temporaire valable 24 h.\nUn téléphone volé est aussi un incident de sécurité : le signaler (KB-014).","KB-014|Signes d'alerte":"Signaler un e-mail suspect (hameçonnage)\n# Signaler un e-mail suspect (hameçonnage)  \n## Signes d'alerte\nExpéditeur inconnu ou imitant un collègue, urgence inhabituelle, demande de mot de passe ou de code MFA, lien vers un site qui ressemble au portail NordTech.","KB-014|Procédure":"Signaler un e-mail suspect (hameçonnage)\n## Procédure\n1. Ne pas cliquer, ne pas répondre, ne pas transférer.\n2. Utiliser le bouton « Signaler » dans Outlook.\n3. Si vous avez cliqué ou saisi un mot de passe : le changer immédiatement (KB-002) et appeler le help-desk. C'est un incident de sécurité à traiter en priorité.","KB-015|Symptôme":"Quota du serveur de fichiers atteint\n# Quota du serveur de fichiers atteint  \n## Symptôme\nMessage « espace insuffisant » en enregistrant sur un lecteur réseau (serveur `srv-fichiers-03`).","KB-015|Procédure":"Quota du serveur de fichiers atteint\n## Procédure\n1. Supprimer les fichiers temporaires et les doublons du dossier d'équipe.\n2. Déplacer les archives de plus de 3 ans vers l'espace d'archivage.\n3. Si tout le serveur est saturé (alerte de supervision « disque > 90 % »), c'est un ticket pour la file N2-infra.","KB-016|Badge perdu ou défectueux":"Badge d'accès aux bâtiments\n# Badge d'accès aux bâtiments  \n## Badge perdu ou défectueux\nLes badges sont gérés par les Services généraux, pas par le help-desk informatique. Se présenter à l'accueil avec une pièce d'identité : un badge temporaire est délivré pour la journée.","KB-017|Ce que reçoit un nouvel arrivant":"Nouvel arrivant : kit informatique\n# Nouvel arrivant : kit informatique  \n## Ce que reçoit un nouvel arrivant\nUn portable préconfiguré, une station d'accueil, un casque, un compte NordTech et l'inscription MFA à faire le premier jour.","KB-017|Délai":"Nouvel arrivant : kit informatique\n## Délai\nLa demande doit être faite par le responsable **au moins 5 jours ouvrés** avant l'arrivée, dans le portail « Arrivées et départs ».","KB-018|Lecture d'une alerte":"Supervision : interpréter une alerte ping\n# Supervision : interpréter une alerte ping  \n## Lecture d'une alerte\n- 100 % de perte sur un seul serveur : serveur arrêté, carte réseau ou commutateur de baie.\n- Perte partielle sur plusieurs serveurs d'une même baie : commutateur ou lien montant.\n- Latence élevée sans perte : congestion ; vérifier les sauvegardes en cours.","KB-018|Escalade":"Supervision : interpréter une alerte ping\n## Escalade\nUn serveur de production injoignable plus de 5 minutes déclenche l'astreinte N2-infra.","KB-019|Réservé au N2":"Redémarrer un serveur de production (procédure de changement)\n# Redémarrer un serveur de production (procédure de changement)  \n## Réservé au N2\nUn redémarrage de serveur de production est un **changement** : il exige un ticket de changement approuvé, une fenêtre de maintenance et l'information des métiers.\n1. Vérifier les sauvegardes de la nuit.\n2. Prévenir les utilisateurs 15 minutes avant.\n3. Redémarrer depuis la console d'administration, jamais depuis un poste utilisateur.\n4. Contrôler les services après redémarrage et clôturer le changement.\nLe N1 et les assistants automatisés ne redémarrent jamais un serveur.","KB-020|Ce que conserve le help-desk":"Conservation des données du support\n# Conservation des données du support  \n## Ce que conserve le help-desk\nLes tickets sont conservés 3 ans après leur clôture. Les conversations avec l'assistant automatisé sont conservées 30 jours, puis supprimées automatiquement.","KB-020|Vos droits":"Conservation des données du support\n## Vos droits\nVous pouvez demander une copie de vos conversations ou leur suppression anticipée au délégué à la protection des données (dpo@nordtech.example)."},"questions":[{"text":"impossible d'enregistrer sur srv-fichiers-03","tokens":["impossibl","enregistr","srv","fichi","03"],"idx":[90327553,452916714,1199102858,2046588797,137438206],"head":[-0.196,-0.148,-0.078,0.01],"res":{"dense_pub":[["KB-008","Conduite à tenir par le N1",0.396],["KB-002","À savoir",0.367],["KB-001","Quand ouvrir un ticket",0.351],["KB-010","Cause",0.348],["KB-015","Symptôme",0.347],["KB-004","Si le problème persiste",0.345],["KB-020","Ce que conserve le help-desk",0.334],["KB-012","Procédure",0.33],["KB-016","Badge perdu ou défectueux",0.312]],"sparse_pub":[["KB-015","Symptôme",17.555],["KB-001","Symptômes",5.163],["KB-015","Procédure",4.337],["KB-013","Nouveau téléphone",3.819],["KB-004","Si le problème persiste",3.79],["KB-001","Quand ouvrir un ticket",3.752],["KB-008","Reconnaître un incident majeur",3.733],["KB-004","Procédure",3.651]],"hybrid_pub":[["KB-015","Symptôme",0.667],["KB-008","Conduite à tenir par le N1",0.5],["KB-001","Quand ouvrir un ticket",0.393],["KB-002","À savoir",0.333],["KB-001","Symptômes",0.333],["KB-004","Si le problème persiste",0.31],["KB-015","Procédure",0.25],["KB-010","Cause",0.2],["KB-013","Nouveau téléphone",0.2]],"dense_all":[["KB-008","Conduite à tenir par le N1",0.396],["KB-002","À savoir",0.367],["KB-001","Quand ouvrir un ticket",0.351],["KB-010","Cause",0.348],["KB-015","Symptôme",0.347],["KB-004","Si le problème persiste",0.345],["KB-020","Ce que conserve le help-desk",0.334],["KB-012","Procédure",0.33],["KB-016","Badge perdu ou défectueux",0.312]],"sparse_all":[["KB-015","Symptôme",17.555],["KB-001","Symptômes",5.163],["KB-015","Procédure",4.337],["KB-013","Nouveau téléphone",3.819],["KB-004","Si le problème persiste",3.79],["KB-001","Quand ouvrir un ticket",3.752],["KB-008","Reconnaître un incident majeur",3.733],["KB-004","Procédure",3.651]],"hybrid_all":[["KB-015","Symptôme",0.667],["KB-008","Conduite à tenir par le N1",0.5],["KB-001","Quand ouvrir un ticket",0.393],["KB-002","À savoir",0.333],["KB-001","Symptômes",0.333],["KB-004","Si le problème persiste",0.31],["KB-015","Procédure",0.25],["KB-010","Cause",0.2],["KB-013","Nouveau téléphone",0.2]]}},{"text":"mon PC rame énormément","tokens":["pc","ram","énorm"],"idx":[1538857960,519984025,1736963314],"head":[0.167,-0.025,0.309,0.087],"res":{"dense_pub":[["KB-011","Vérifications rapides",0.409],["KB-017","Ce que reçoit un nouvel arrivant",0.279],["KB-010","Cause",0.271],["KB-002","À savoir",0.259],["KB-010","Procédure",0.247],["KB-017","Délai",0.243],["KB-006","Vérifications",0.235],["KB-015","Symptôme",0.213],["KB-012","Procédure",0.206]],"sparse_pub":[],"hybrid_pub":[["KB-011","Vérifications rapides",0.5],["KB-017","Ce que reçoit un nouvel arrivant",0.333],["KB-010","Cause",0.25],["KB-002","À savoir",0.2],["KB-010","Procédure",0.167],["KB-017","Délai",0.143],["KB-006","Vérifications",0.125],["KB-015","Symptôme",0.111],["KB-012","Procédure",0.1]],"dense_all":[["KB-011","Vérifications rapides",0.409],["KB-017","Ce que reçoit un nouvel arrivant",0.279],["KB-010","Cause",0.271],["KB-002","À savoir",0.259],["KB-010","Procédure",0.247],["KB-017","Délai",0.243],["KB-006","Vérifications",0.235],["KB-015","Symptôme",0.213],["KB-012","Procédure",0.206]],"sparse_all":[],"hybrid_all":[["KB-011","Vérifications rapides",0.5],["KB-017","Ce que reçoit un nouvel arrivant",0.333],["KB-010","Cause",0.25],["KB-002","À savoir",0.2],["KB-010","Procédure",0.167],["KB-017","Délai",0.143],["KB-006","Vérifications",0.125],["KB-015","Symptôme",0.111],["KB-012","Procédure",0.1]]}},{"text":"procédure pour redémarrer un serveur de production","tokens":["procédur","redémarr","serveur","product"],"idx":[115676295,818319522,1084072007,1469213263],"head":[0.023,-0.164,-0.07,-0.148],"res":{"dense_pub":[["KB-015","Procédure",0.467],["KB-008","Conduite à tenir par le N1",0.375],["KB-017","Délai",0.347],["KB-011","Vérifications rapides",0.337],["KB-015","Symptôme",0.296],["KB-020","Ce que conserve le help-desk",0.295],["KB-004","Si le problème persiste",0.275],["KB-001","Procédure",0.27],["KB-001","Quand ouvrir un ticket",0.257]],"sparse_pub":[["KB-008","Reconnaître un incident majeur",7.97],["KB-008","Conduite à tenir par le N1",7.184],["KB-015","Procédure",4.327],["KB-009","Procédure",4.298],["KB-010","Procédure",4.298],["KB-001","Procédure",3.775],["KB-015","Symptôme",2.936],["KB-011","Vérifications rapides",2.73],["KB-006","Vérifications",2.697]],"hybrid_pub":[["KB-015","Procédure",0.75],["KB-008","Conduite à tenir par le N1",0.667],["KB-008","Reconnaître un incident majeur",0.5],["KB-011","Vérifications rapides",0.311],["KB-015","Symptôme",0.292],["KB-001","Procédure",0.254],["KB-017","Délai",0.25],["KB-009","Procédure",0.2],["KB-010","Procédure",0.167]],"dense_all":[["KB-019","Réservé au N2",0.763],["KB-018","Escalade",0.54],["KB-015","Procédure",0.467],["KB-018","Lecture d'une alerte",0.435],["KB-008","Conduite à tenir par le N1",0.375],["KB-017","Délai",0.347],["KB-011","Vérifications rapides",0.337],["KB-015","Symptôme",0.296],["KB-020","Ce que conserve le help-desk",0.295]],"sparse_all":[["KB-019","Réservé au N2",12.588],["KB-008","Reconnaître un incident majeur",7.97],["KB-008","Conduite à tenir par le N1",7.184],["KB-018","Escalade",6.314],["KB-015","Procédure",4.327],["KB-009","Procédure",4.298],["KB-010","Procédure",4.298],["KB-001","Procédure",3.775],["KB-015","Symptôme",2.936]],"hybrid_all":[["KB-019","Réservé au N2",1.0],["KB-018","Escalade",0.533],["KB-015","Procédure",0.417],["KB-008","Conduite à tenir par le N1",0.417],["KB-008","Reconnaître un incident majeur",0.333],["KB-015","Symptôme",0.211],["KB-018","Lecture d'une alerte",0.2],["KB-017","Délai",0.143],["KB-009","Procédure",0.143]]}}]};
+const Q = D.questions;
+const QLABEL = ["mot exact", "paraphrase", "article interne"];
+const TARGET = ["KB-015", "KB-011", "KB-008"];
+const ART = {}; D.articles.forEach(a => { ART[a.id] = a; });
+const fr = (x, d) => { const m = Math.pow(10, d); return (Math.round(x * m + 1e-7) / m).toFixed(d).replace(".", ","); };
+const pyrepr = v => v.includes("'") ? '"' + v + '"' : "'" + v + "'";
+const ord = n => n === 1 ? "1er" : n + "e";
+const MODES = [["dense","Dense","cosinus",3],["sparse","BM25","score BM25",2],["hybrid","Hybride","score RRF",3]];
+const MODE_FR = {dense:"dense seul", sparse:"BM25 seul", hybrid:"hybride"};
+
+/* ---------- classements (données mesurées) ---------- */
+function list(q, mode, filt){ return Q[q].res[mode + "_" + (filt ? "pub" : "all")]; }
+const key = r => r[0] + "|" + r[1];
+function topk(q, mode, filt){
+  const L = list(q, mode, filt), seen = new Set(), kept = [], dup = [];
+  let tieWith = null;
+  for (let i = 0; i < L.length; i++){
+    const id = L[i][0];
+    if (kept.length < 3){
+      if (seen.has(id)) dup.push(i); else { seen.add(id); kept.push(i); }
+    } else if (!seen.has(id)){
+      if (L[i][2] === L[kept[2]][2]) tieWith = i;
+      break;
+    }
+  }
+  return {L, kept, dup, tieWith};
+}
+function rrfParts(q, filt, r){
+  const d = list(q, "dense", filt).findIndex(x => key(x) === key(r));
+  const b = list(q, "sparse", filt).findIndex(x => key(x) === key(r));
+  return {d, b, sum: (d >= 0 ? 1/(d+2) : 0) + (b >= 0 ? 1/(b+2) : 0)};
+}
+function verdict(q, mode, filt){
+  const t = topk(q, mode, filt), ids = t.kept.map(i => t.L[i][0]), keys = t.kept.map(i => key(t.L[i]));
+  if (q === 0) return ids.includes("KB-015")
+    ? {cls:"good", tag:"bon article trouvé", ans:'Votre problème ressemble au cas « Quota du serveur de fichiers atteint » : l\'enregistrement sur srv-fichiers-03 échoue quand le quota est atteint <span class="ref">[KB-015]</span>. L\'extrait reçu décrit le symptôme mais pas la marche à suivre, je transmets la demande au N1.'}
+    : {cls:"bad", tag:"bon article manqué", ans:'Les extraits reçus parlent de l\'ERP, du mot de passe et du VPN <span class="ref">[KB-008]</span> <span class="ref">[KB-002]</span> <span class="ref">[KB-001]</span>, pas de srv-fichiers-03. Je n\'ai pas de procédure pour ce problème.'};
+  if (q === 1) return ids.length === 0
+    ? {cls:"bad", tag:"aucun extrait", ans:"Je n'ai trouvé aucune procédure pour ce problème dans la base de connaissances."}
+    : {cls:"good", tag:"bon article trouvé", ans:'Redémarrez le poste (et non une simple mise en veille), puis repérez dans le Gestionnaire des tâches une application qui consomme plus de 50 % du processeur ou de la mémoire <span class="ref">[KB-011]</span>. Vérifiez aussi qu\'il reste au moins 10 % d\'espace libre sur le disque C: <span class="ref">[KB-011]</span>.'};
+  if (ids.includes("KB-019") || ids.includes("KB-018"))
+    return {cls:"bad", tag:"article interne transmis", ans:'1. Vérifier les sauvegardes de la nuit. 2. Prévenir les utilisateurs 15 minutes avant. 3. Redémarrer depuis la console d\'administration <span class="ref int">[KB-019]</span>.'};
+  if (keys.includes("KB-008|Conduite à tenir par le N1"))
+    return {cls:"good", tag:"bon article trouvé", ans:'Le N1 ne redémarre pas un serveur de production : c\'est une opération N2 soumise à la procédure de changement <span class="ref">[KB-008]</span>. Il faut ouvrir un ticket pour l\'équipe N2 concernée.'};
+  return {cls:"warn", tag:"pas de réponse dans les extraits", ans:"Les extraits reçus ne décrivent pas de procédure de redémarrage de serveur. Je ne peux pas répondre à partir de la base de connaissances."};
+}
+function kwargs(c){
+  let a = "";
+  if (!c.filt) a += ", public_seulement=False";
+  if (c.mode !== "hybrid") a += ', mode="' + c.mode + '"';
+  return a;
+}
+function formater(q, mode, filt){
+  const t = topk(q, mode, filt);
+  if (!t.kept.length) return "Aucun article pertinent dans la base de connaissances.";
+  return t.kept.map(i => "[" + t.L[i][0] + "] " + D.chunks[key(t.L[i])]).join("\n\n");
+}
+
+/* ---------- le code affiché ---------- */
+const CODE_IDX = [
+  ["i0", '<span class="k">def</span> <span class="f">lire_article</span>(chemin): …   <span class="c"># en-tête --- → metadata, corps → page_content</span>'],
+  ["i1", 'sections = <span class="f">MarkdownHeaderTextSplitter</span>([(<span class="s">"#"</span>, <span class="s">"titre_h1"</span>), (<span class="s">"##"</span>, <span class="s">"section"</span>)], strip_headers=<span class="k">False</span>)'],
+  ["i2", 'garde_fou = <span class="f">RecursiveCharacterTextSplitter</span>(chunk_size=taille, chunk_overlap=<span class="s">80</span>)   <span class="c"># taille = 700</span>'],
+  ["i3", 'texte = <span class="s">f"{article.metadata[\'titre\']}\\n{section.page_content}"</span>'],
+  ["i4", '<span class="f">HuggingFaceEmbeddings</span>(model_name=os.environ[<span class="s">"EMBEDDING_MODEL"</span>], model_kwargs={<span class="s">"device"</span>: os.environ.get(<span class="s">"EMBEDDING_DEVICE"</span>, <span class="s">"cpu"</span>)})'],
+  ["i5", '<span class="f">FastEmbedSparse</span>(model_name=<span class="s">"Qdrant/bm25"</span>, language=<span class="s">"french"</span>)'],
+  ["i6", 'vectors_config=models.<span class="f">VectorParams</span>(size=dimension, distance=models.Distance.COSINE),'],
+  ["i7", 'sparse_vectors_config={VECTEUR_CREUX: models.<span class="f">SparseVectorParams</span>(modifier=models.Modifier.IDF)},'],
+  ["i8", 'client.<span class="f">create_payload_index</span>(nom, <span class="s">f"metadata.{champ}"</span>, models.PayloadSchemaType.KEYWORD)'],
+  ["i9", 'ids = [<span class="f">str</span>(uuid.<span class="f">uuid5</span>(ESPACE_IDS, <span class="s">f"{m.metadata[\'id\']}#{m.metadata[\'morceau\']}#{m.metadata[\'section\']}"</span>)) …]'],
+  ["i10", '<span class="f">QdrantVectorStore</span>(…, retrieval_mode=RetrievalMode.HYBRID).<span class="f">add_documents</span>(morceaux, ids=ids)'],
+];
+const CODE_RECH = [
+  ["r0", '<span class="k">def</span> <span class="f">rechercher</span>(question, *, k=<span class="s">3</span>, public_seulement=<span class="k">True</span>, categorie=<span class="k">None</span>, mode=<span class="s">"hybrid"</span>, un_par_article=<span class="k">True</span>):'],
+  ["r1", '    candidats = <span class="f">magasin</span>(mode).<span class="f">similarity_search</span>(question, k=k * <span class="s">3</span> <span class="k">if</span> un_par_article <span class="k">else</span> k,'],
+  ["r2", '                    filter=<span class="f">filtre</span>(public_seulement=public_seulement, categorie=categorie))'],
+  ["r3", '    <span class="k">for</span> doc <span class="k">in</span> candidats:   <span class="c"># un morceau par article</span>'],
+  ["r4", '        <span class="k">if</span> doc.metadata[<span class="s">"id"</span>] <span class="k">not in</span> vus: vus.<span class="f">add</span>(…); resultats.<span class="f">append</span>(doc)'],
+  ["r5", '    <span class="k">return</span> resultats[:k]'],
+  ["r6", '<span class="c"># filtre()</span>  conditions.<span class="f">append</span>(models.<span class="f">FieldCondition</span>(key=<span class="s">"metadata.visibilite"</span>, match=models.<span class="f">MatchValue</span>(value=<span class="s">"public"</span>)))'],
+  ["r7", '<span class="c"># formater()</span> <span class="k">return</span> <span class="s">"\\n\\n"</span>.<span class="f">join</span>(<span class="s">f"[{d.metadata[\'id\']}] {d.page_content}"</span> <span class="k">for</span> d <span class="k">in</span> documents)'],
+];
+const CODE_LIB = [
+  ["l0", 'query_dense_embedding = embeddings.<span class="f">embed_query</span>(query)'],
+  ["l1", 'query_sparse_embedding = self.sparse_embeddings.<span class="f">embed_query</span>(query)'],
+  ["l2", 'results = self.client.<span class="f">query_points</span>(prefetch=['],
+  ["l3", '    models.<span class="f">Prefetch</span>(using=self.vector_name, query=query_dense_embedding, filter=filter, limit=k),'],
+  ["l4", '    models.<span class="f">Prefetch</span>(using=self.sparse_vector_name, query=models.<span class="f">SparseVector</span>(…), filter=filter, limit=k)],'],
+  ["l5", '    query=hybrid_fusion <span class="k">or</span> models.<span class="f">FusionQuery</span>(fusion=models.Fusion.RRF),'],
+  ["l6", '    query_filter=filter, limit=k, with_payload=<span class="k">True</span>)'],
+];
+const fillCode = (el, rows) => { $(el).innerHTML = rows.map(([id,h]) => `<span class="ln" data-l="${id}">${h}</span>`).join(""); };
+fillCode("codeIdx", CODE_IDX); fillCode("codeRech", CODE_RECH); fillCode("codeLib", CODE_LIB);
+
+/* ---------- les étapes ---------- */
+const PH = {p0:"Avant", p1:"Indexation", pq:"Recherche", p2:"Réponse"};
+const PHASE = ["p0","p1","p1","p1","p1","p1","p1","pq","pq","pq","pq","pq","pq","pq","pq","p2","p2"];
+const MARK  = [1,   5,   11,  17,  23,  29,  36,  43,  48,  53,  58,  63,  68,  74,  80,  87,  96];
+
+function initial(){
+  return { points: 0, pointsSub: "collection pas encore créée", done: [], trail: [], lastOn: [], idxPhase: false,
+           term: [], pill: "idle", cols: {dense:false, sparse:false, hybrid:false} };
+}
+function resetTransient(s){
+  s.on = []; s.edge = []; s.code = []; s.codeCls = "hl"; s.note = null; s.data = null;
+  s.choices = false; s.modeChoice = false; s.selMode = null; s.showTop = false; s.inv = false; s.dimN = []; s.subs = {};
+}
+function act(s, nodes, edges){
+  s.lastOn.forEach(n => { if (!s.done.includes(n)) s.done.push(n); });
+  s.on = nodes; s.lastOn = nodes; s.edge = edges || [];
+  s.edge.forEach(e => { if (!s.trail.includes(e)) s.trail.push(e); });
+}
+const T = (s, c, x) => s.term.push({c, x});
+
+const STEPS = [
+  /* 0 */ (s) => {
+    act(s, ["kb"]);
+    s.data = {kind:"kb"};
+    s.title = "La base de connaissances de NordTech";
+    s.text = "<code>data/kb</code> contient 20 articles Markdown fictifs. Chaque article commence par un en-tête : <code>id</code>, <code>titre</code>, <code>categorie</code>, <code>equipe</code>, <code>visibilite</code>, <code>maj</code>. 18 articles sont publics. KB-018 et KB-019 sont <b>internes</b> : ce sont des procédures réservées au N2.";
+  },
+  /* 1 */ (s) => {
+    act(s, ["kb"]);
+    s.data = {kind:"article"}; s.code = ["i0"];
+    s.title = "Lire un article";
+    s.text = "<code>lire_article</code> sépare l'en-tête du corps. Le corps devient <code>page_content</code>, l'en-tête devient <code>metadata</code>. Ces métadonnées deviendront le <b>payload</b> dans Qdrant. Suivons KB-015, le quota du serveur de fichiers <code>srv-fichiers-03</code>.";
+  },
+  /* 2 */ (s) => {
+    act(s, ["cut"], ["e_kc"]);
+    s.data = {kind:"chunks"}; s.code = ["i1","i2","i3"];
+    s.title = "Découper par section";
+    s.text = "<code>decouper</code> coupe chaque article à chaque titre <code>##</code>. Un garde-fou recoupe les sections de plus de 700 caractères. Le titre de l'article est remis devant chaque morceau, pour que le morceau garde son contexte. Les 20 articles donnent <b>37 morceaux</b>, dont 2 pour KB-015.";
+  },
+  /* 3 */ (s) => {
+    act(s, ["den"], ["e_cd"]);
+    s.data = {kind:"dense"}; s.code = ["i4"];
+    s.title = "Premier vecteur : le sens";
+    s.text = "Chaque morceau passe dans <code>HuggingFaceEmbeddings</code> avec le modèle <code>paraphrase-multilingual-MiniLM-L12-v2</code>, sur CPU. Il en sort <b>384 nombres</b>. Deux textes de sens proche donnent des vecteurs proches, même sans mot commun.";
+  },
+  /* 4 */ (s) => {
+    act(s, ["bm"], ["e_cb"]);
+    s.data = {kind:"sparse"}; s.code = ["i5"];
+    s.title = "Second vecteur : les mots";
+    s.text = "<code>FastEmbedSparse</code> (modèle <code>Qdrant/bm25</code>, en français) découpe le texte en mots, retire les mots vides et garde la <b>racine</b> de chaque mot. Chaque racine devient un numéro, avec un poids qui dépend de sa fréquence dans le morceau. Le trait d'union coupe <code>srv-fichiers-03</code> en trois mots : srv, fichi, 03.";
+  },
+  /* 5 */ (s) => {
+    act(s, ["store"]);
+    s.pointsSub = "collection créée, encore vide";
+    s.data = {kind:"collection"}; s.code = ["i6","i7","i8"];
+    T(s, "cmd", "$ uv run --project infrastructure python construction/etape_07_rag_specialistes_mcp.py --indexer");
+    s.pill = "run"; s.inv = true;
+    s.title = "Créer la collection";
+    s.text = "<code>creer_collection</code> crée <code>kb_nordtech</code> avec deux vecteurs : un vecteur dense de 384 dimensions comparé par cosinus, et un vecteur creux <code>langchain-sparse</code> avec <code>Modifier.IDF</code>. Avec IDF, Qdrant calcule lui-même la rareté de chaque mot dans la collection. Des index de payload accélèrent les filtres.";
+    s.note = {cls:"", h:"La collection est créée <b>par notre code</b>. Celle que crée <code>QdrantVectorStore.from_documents</code> n'a pas de modificateur IDF : BM25 perdrait sa pondération (constaté en préparant J3-02)."};
+  },
+  /* 6 */ (s) => {
+    act(s, ["store"], ["e_ds","e_bs"]);
+    s.points = 37; s.pointsSub = "points, un par morceau";
+    s.data = {kind:"point"}; s.code = ["i9","i10"];
+    T(s, "good", "📚 37 morceaux indexés dans la collection kb_nordtech");
+    T(s, "sys", "[processus terminé · code 0]");
+    s.pill = "dead";
+    s.title = "Ranger 37 points";
+    s.text = "<code>add_documents</code> écrit un <b>point</b> par morceau. Un point contient un identifiant, les deux vecteurs et le payload : le texte sous <code>page_content</code>, les métadonnées sous <code>metadata</code>. L'identifiant est un <code>uuid5</code> de l'article et du morceau : réindexer remplace les points au lieu de les dupliquer.";
+  },
+  /* 7 */ (s, c) => {
+    s.done = []; s.trail = []; s.lastOn = []; s.idxPhase = true;
+    act(s, ["q"]);
+    s.pointsSub = "points, un par morceau";
+    s.choices = true; s.data = {kind:"question"}; s.code = ["r0","r1","r2"]; s.codeCls = "hlq";
+    T(s, "cmd", "$ uv run --project infrastructure python");
+    T(s, "", ">>> from helpdesk_ops import kb");
+    s.pill = "run";
+    s.title = "Une question arrive";
+    s.text = "L'indexation est faite une fois pour toutes. Le spécialiste Procédures appelle son outil <code>rechercher_procedures</code>, qui appelle <code>kb.rechercher(question, k=3)</code> avec la question écrite par le modèle dans l'appel d'outil. Pour garder 3 articles différents, la fonction demande <b>9 morceaux</b> à Qdrant. Choisissez la question ci-dessous.";
+  },
+  /* 8 */ (s, c) => {
+    act(s, ["den","bm"], ["e_qd","e_qb"]);
+    s.choices = true; s.data = {kind:"qvec"}; s.code = ["l0","l1"]; s.codeCls = "hlq";
+    const extra = [
+      "Les racines utiles ici sont <b>srv</b>, <b>fichi</b> et <b>03</b>. Les mots vides comme « d' » et « sur » sont retirés.",
+      "Aucune de ces racines (pc, ram, énorm) n'apparaît dans la KB. KB-011 parle de « poste » et de « mémoire ».",
+      "Les racines procédur, redémarr, serveur et product reviennent dans plusieurs articles.",
+    ][c.q];
+    s.title = "La question encodée deux fois";
+    s.text = "La question passe dans les deux mêmes modèles que les morceaux. Côté dense, 384 nombres. Côté BM25, chaque racine reçoit le poids 1 : la rareté (IDF) sera appliquée par Qdrant. " + extra;
+  },
+  /* 9 */ (s, c) => {
+    act(s, ["filt"], ["e_ds","e_bs","e_sf"]);
+    s.choices = true; s.data = {kind:"filter"};
+    s.pointsSub = c.filt ? "points · 34 candidats après filtre" : "points · 37 candidats, sans filtre";
+    if (c.filt){
+      s.code = ["r6","r2"]; s.codeCls = "hlq";
+      s.title = "Le filtre de payload";
+      s.text = "<code>filtre(public_seulement=True)</code> construit une condition <code>metadata.visibilite = public</code>. Qdrant l'applique pendant la recherche : les 3 morceaux de KB-018 et KB-019 ne sont même pas candidats. Le filtre est posé par le code, le LLM n'a rien à décider.";
+    } else {
+      s.code = ["r2"]; s.codeCls = "hle";
+      s.title = "Sans filtre de payload";
+      s.text = "Vous avez retiré le filtre : <code>public_seulement=False</code>. Les 37 points sont candidats, procédures internes comprises. Regardez ce qui arrive avec la question sur le redémarrage d'un serveur.";
+    }
+  },
+  /* 10 */ (s, c) => {
+    act(s, ["pd"], ["e_fd"]);
+    s.choices = true; s.cols.dense = true; s.data = {kind:"query", part:"dense"}; s.code = ["l2","l3"]; s.codeCls = "hlq";
+    const n = c.filt ? 34 : 37;
+    s.title = "Recherche dense : le sens";
+    s.text = `En mode hybride (le défaut), Qdrant lance d'abord deux recherches. La première compare le vecteur de la question aux ${n} vecteurs denses, par cosinus, et garde les 9 meilleurs. ` + [
+      "En tête, KB-008 (l'ERP) et KB-002 (le mot de passe). <b>KB-015 n'arrive qu'en 5e position</b> : un nom de serveur n'a pas de sens que le modèle saurait rapprocher.",
+      "<b>KB-011 « Poste lent » arrive en tête</b>, sans un seul mot commun avec la question. « Rame » et « lent » ont un sens proche.",
+      c.filt ? "KB-015 (quota du serveur de fichiers) et KB-008 (l'ERP) arrivent en tête : ils parlent de serveurs et de procédures."
+             : "<b>KB-019, la procédure interne de redémarrage, arrive en tête</b> avec un cosinus de 0,76. Sans filtre, rien ne l'arrête.",
+    ][c.q];
+  },
+  /* 11 */ (s, c) => {
+    act(s, ["pb"], ["e_fb"]);
+    s.choices = true; s.cols.sparse = true; s.data = {kind:"query", part:"sparse"}; s.code = ["l4"]; s.codeCls = "hlq";
+    if (c.q === 1) s.subs.pb = "0 résultat";
+    s.title = "Recherche BM25 : les mots exacts";
+    s.text = "La seconde recherche ne compare que les racines communes entre la question et chaque morceau. Elle ne renvoie que les morceaux qui partagent au moins une racine. " + [
+      "<b>KB-015 Symptôme arrive en tête</b> avec 17,56 : c'est le seul morceau qui contient à la fois srv, fichi et 03.",
+      "<b>Aucune racine commune : la liste est vide.</b> BM25 ne connaît que les mots écrits, pas leur sens.",
+      c.filt ? "KB-008 arrive en tête : ses morceaux contiennent serveur, production et procédure."
+             : "<b>KB-019 arrive en tête</b> avec 12,59 : son titre contient presque tous les mots de la question.",
+    ][c.q];
+  },
+  /* 12 */ (s, c) => {
+    act(s, ["rrf"], ["e_dr","e_br"]);
+    s.choices = true; s.cols.hybrid = true; s.data = {kind:"query", part:"rrf"}; s.code = ["l5","l6"]; s.codeCls = "hlq";
+    s.title = "Fusion RRF : additionner des rangs";
+    s.text = "Qdrant fusionne les deux listes avec <b>Reciprocal Rank Fusion</b>, dans la même requête <code>query_points</code>. Chaque morceau reçoit <code>1 / (position + 2)</code> dans chaque liste où il apparaît (position 0 pour le premier), et on additionne. Les scores bruts ne comptent plus : un cosinus de 0,4 et un score BM25 de 17 deviennent comparables. " + [
+      "KB-015 Symptôme : 1/6 côté dense + 1/2 côté BM25 = 0,667. <b>Il passe en tête.</b>",
+      "La liste BM25 est vide : <b>le classement hybride reprend le classement dense.</b>",
+      c.filt ? "KB-015 Procédure : 1/2 + 1/4 = 0,75, juste devant KB-008 Conduite à tenir (1/3 + 1/3 = 0,667)."
+             : "KB-019 est premier dans les deux listes : 1/2 + 1/2 = <b>1</b>.",
+    ][c.q];
+  },
+  /* 13 */ (s, c) => {
+    act(s, [c.mode === "dense" ? "pd" : c.mode === "sparse" ? "pb" : "rrf"]);
+    if (c.mode === "dense") s.dimN = ["pb","rrf"]; else if (c.mode === "sparse") s.dimN = ["pd","rrf"];
+    if (c.q === 1) s.subs.pb = "0 résultat";
+    s.choices = true; s.modeChoice = true; s.selMode = c.mode; s.data = {kind:"modes"}; s.code = ["r0","r1"]; s.codeCls = "hlq";
+    let v;
+    if (c.q === 0) v = {dense:"En dense seul, <b>KB-015 n'est même pas dans les 3 premiers articles</b>. La recherche par le sens rate le nom exact du serveur.",
+                        sparse:"En BM25 seul, <b>KB-015 est en tête</b> : le mot exact suffit.",
+                        hybrid:"En hybride, <b>KB-015 est en tête</b> : BM25 l'a remonté, la fusion l'a gardé."}[c.mode];
+    else if (c.q === 1) v = {dense:"En dense seul, <b>KB-011 est en tête</b>.",
+                             sparse:"En BM25 seul, <b>la liste est vide</b> : rien à donner au LLM.",
+                             hybrid:"En hybride, <b>KB-011 est en tête</b> : la liste BM25 vide ne gêne pas la fusion."}[c.mode];
+    else v = c.filt
+      ? "Avec le filtre, les trois modes ne voient que des articles publics. En dense et en hybride, le morceau « Conduite à tenir » de KB-008, qui interdit au N1 de redémarrer un serveur, est dans le top 3. En BM25 seul, le morceau gardé de KB-008 est « Reconnaître un incident majeur », qui ne parle pas du redémarrage."
+      : "Sans filtre, <b>KB-019 est en tête dans les trois modes</b>. Changer de mode ne protège rien : seul le filtre écarte les procédures internes.";
+    s.title = "Et avec un seul moteur ?";
+    s.text = "Le paramètre <code>mode</code> de <code>kb.rechercher</code> choisit la requête envoyée : dense seul, BM25 seul (<code>\"sparse\"</code>) ou hybride, le défaut. En dense ou en BM25 seul, il n'y a ni deuxième recherche ni fusion. Changez le mode ci-dessous et comparez. " + v;
+  },
+  /* 14 */ (s, c) => {
+    act(s, ["top"], ["e_rt"]);
+    s.choices = true; s.modeChoice = true; s.selMode = c.mode; s.showTop = true; s.data = {kind:"topk"}; s.code = ["r3","r4","r5"]; s.codeCls = "hlq";
+    const t = topk(c.q, c.mode, c.filt);
+    T(s, "", `>>> docs = kb.rechercher("${Q[c.q].text}", k=3${kwargs(c)})`);
+    T(s, "", '>>> [(d.metadata["id"], d.metadata["section"]) for d in docs]');
+    T(s, "", "[" + t.kept.map(i => `(${pyrepr(t.L[i][0])}, ${pyrepr(t.L[i][1])})`).join(", ") + "]");
+    let extra = "";
+    if (!t.kept.length) extra = " Ici la liste est vide : <code>docs = []</code>.";
+    else {
+      const keptIds = t.kept.map(i => t.L[i][0]);
+      const drop = t.dup.map(i => t.L[i]).filter(r => keptIds.includes(r[0]));
+      if (drop.length) extra += " Écarté : " + drop.map(r => `${r[0]} · ${esc(r[1])}`).join(", ") + ", car l'article a déjà sa place.";
+      const keptKeys = t.kept.map(i => key(t.L[i]));
+      if (c.q === 0 && keptKeys.includes("KB-015|Symptôme") && t.L.some(r => key(r) === "KB-015|Procédure")) extra += " Pour KB-015, seule la section Symptôme passe : la section Procédure ne sera pas transmise au LLM.";
+      if (t.tieWith != null) extra += ` ${t.L[t.kept[2]][0]} et ${t.L[t.tieWith][0]} sont ex æquo pour la 3e place : à score égal, l'ordre dépend de Qdrant.`;
+    }
+    s.title = "Top-k : un morceau par article";
+    s.text = "<code>kb.rechercher</code> parcourt les 9 morceaux dans l'ordre et garde le premier morceau de chaque article, jusqu'à 3 articles. Sans cette règle, les sections d'un même article prendraient toutes les places." + extra;
+  },
+  /* 15 */ (s, c) => {
+    act(s, ["llm"], ["e_tl"]);
+    s.choices = true; s.modeChoice = true; s.selMode = c.mode; s.showTop = true; s.data = {kind:"prompt"}; s.code = ["r7"]; s.codeCls = "hlq";
+    T(s, "", ">>> print(kb.formater(docs))");
+    formater(c.q, c.mode, c.filt).split("\n").forEach(l => T(s, "", l));
+    const empty = !topk(c.q, c.mode, c.filt).kept.length;
+    s.title = "Les passages vont au LLM";
+    s.text = empty
+      ? "La liste est vide : <code>kb.formater</code> renvoie « Aucun article pertinent dans la base de connaissances. » C'est ce texte que l'outil rend au modèle. Le modèle ne reçoit aucun extrait de la KB."
+      : "<code>kb.formater</code> met chaque morceau derrière sa référence <code>[KB-xxx]</code>. Ce texte est le résultat de l'outil <code>rechercher_procedures</code> : il revient au modèle dans la conversation, après la consigne du spécialiste. Le modèle ne voit rien d'autre de la KB.";
+  },
+  /* 16 */ (s, c) => {
+    act(s, ["llm"]);
+    s.choices = true; s.modeChoice = true; s.selMode = c.mode; s.showTop = true; s.data = {kind:"answer"};
+    const v = verdict(c.q, c.mode, c.filt);
+    T(s, "sys", "réponse type du spécialiste (rédigée pour l'animation) :");
+    T(s, v.cls === "bad" ? "bad" : v.cls === "warn" ? "warn" : "good", "🤖 " + v.ans.replace(/<[^>]+>/g, ""));
+    const lead = {
+      good: "Le bon article est dans les passages : le modèle peut répondre et citer sa source.",
+      bad: c.q === 2 ? "Une procédure interne N2 est arrivée chez l'assistant N1. Le modèle la cite fidèlement, et c'est justement le problème." : "Le bon article n'est pas dans les passages : le modèle ne peut pas l'inventer, et ne doit pas essayer.",
+      warn: "Les passages ne contiennent pas la consigne utile : le modèle ne peut que le dire.",
+    }[v.cls];
+    s.title = "La réponse cite ses sources";
+    const tail = (c.q === 2 && v.cls === "bad")
+      ? " Ce filtre se pose dans le code, jamais dans le prompt : remettez <code>public_seulement=True</code> pour comparer."
+      : " Le réflexe de débogage reste le même : <b>la bonne fiche est-elle remontée ?</b> Si non, il faut corriger la recherche avant de toucher au prompt. Changez la question, le filtre ou le mode pour comparer.";
+    s.text = lead + " Le texte affiché est un exemple : la vraie formulation dépend du modèle." + tail;
+  },
+];
+const N = STEPS.length - 1;
+
+/* ---------- état de lecture ---------- */
+const ctx = { q: 0, mode: "hybrid", filt: true };
+let idx = 0, prevIdx = -1, playing = false, timer = null, prevModel = null;
+const seen = new Set([0]);
+
+function build(i){
+  const s = initial();
+  for (let k = 0; k <= i; k++){ resetTransient(s); s.phase = PHASE[k]; STEPS[k](s, ctx); }
+  return s;
+}
+
+/* ---------- rendu ---------- */
+const NODES = ["kb","q","cut","den","bm","store","filt","pd","pb","rrf","top","llm"];
+const EDGES = ["e_kc","e_cd","e_cb","e_qd","e_qb","e_ds","e_bs","e_sf","e_fd","e_fb","e_dr","e_br","e_rt","e_tl"];
+const SUBS = {pd:"Prefetch · limit=9", pb:"Prefetch · limit=9"};
+function renderGraph(s){
+  NODES.forEach(n => {
+    const g = $("n-" + n); g.classList.remove("on","done","idx","dim","off");
+    if (s.on.includes(n)) g.classList.add("on");
+    else if (s.done.includes(n)) g.classList.add("done");
+    else if (s.idxPhase && ["kb","cut","store"].includes(n)) g.classList.add("idx");
+    if (s.dimN.includes(n)) g.classList.add("dim");
+  });
+  const filtOff = idx >= 9 && !ctx.filt;
+  $("n-filt").classList.toggle("off", filtOff);
+  $("t-filt").textContent = filtOff ? "aucun filtre : public_seulement=False" : "filtre : metadata.visibilite = public";
+  $("sub-q").textContent = idx >= 7 ? QLABEL[ctx.q] : "rechercher(…, k=3)";
+  $("sub-store").textContent = s.points ? `${s.points} points · 2 vecteurs + payload` : "2 vecteurs + payload par morceau";
+  ["pd","pb"].forEach(n => { $("sub-" + n).textContent = s.subs[n] || SUBS[n]; });
+  EDGES.forEach(e => {
+    const p = $(e); p.classList.remove("on","trail");
+    if (s.edge.includes(e)) p.classList.add("on"); else if (s.trail.includes(e)) p.classList.add("trail");
+  });
+}
+
+const SPARSE_DOC = [["quot",1273790862,1.859],["serveur",1084072007,1.96],["fichi",2046588797,1.96],["atteint",1529183002,1.859],["symptôm",719352766,1.61],["messag",1454980414,1.61],["espac",1615876105,1.61],["insuffis",997358568,1.61],["enregistr",137438206,1.61],["lecteur",438346134,1.61],["réseau",1331729399,1.61],["srv",452916714,1.61],["03",1199102858,1.61]];
+const DENSE_HEAD = [0.031, -0.095, -0.032, 0.027, 0.035, -0.26];
+const KB015_RAW = "---\nid: KB-015\ntitre: Quota du serveur de fichiers atteint\ncategorie: materiel\nequipe: N1\nvisibilite: public\nmaj: 2026-10-15\n---";
+const KB015_BODY = "# Quota du serveur de fichiers atteint\n\n## Symptôme\nMessage « espace insuffisant » en enregistrant sur un lecteur réseau (serveur `srv-fichiers-03`).\n\n## Procédure\n1. Supprimer les fichiers temporaires et les doublons du dossier d'équipe.\n2. Déplacer les archives de plus de 3 ans vers l'espace d'archivage.\n3. Si tout le serveur est saturé (alerte de supervision « disque > 90 % »), c'est un ticket pour la file N2-infra.";
+const META015 = [["id","KB-015"],["titre","Quota du serveur de fichiers atteint"],["categorie","materiel"],["equipe","N1"],["visibilite","public"],["maj","2026-10-15"]];
+const kv = rows => `<dl class="kv">${rows.map(([k,v,cl]) => `<dt>${esc(k)}</dt><dd class="${cl || ""}">${esc(v)}</dd>`).join("")}</dl>`;
+let barsCache = null;
+function bars(){
+  if (barsCache) return barsCache;
+  let x = 1234567, h = "";
+  for (let i = 0; i < 384; i++){
+    x = (x * 1103515245 + 12345) % 2147483648;
+    const v = i < 6 ? DENSE_HEAD[i] : ((x / 2147483648) - .5) * .32;
+    const hgt = Math.min(50, Math.abs(v) * 160 + 1);
+    h += `<i style="height:${hgt.toFixed(1)}px;align-self:${v >= 0 ? "flex-end" : "flex-start"}"></i>`;
+  }
+  return (barsCache = h);
+}
+
+function renderData(s, fresh){
+  const d = s.data, c = ctx, q = Q[c.q];
+  let h = "", ph = "Ce que contient chaque objet à cette étape.";
+  if (!d){ $("data").innerHTML = ""; return; }
+  if (d.kind === "kb"){
+    ph = "data/kb : un fichier par article, avec son en-tête.";
+    h = `<ul class="arts">` + D.articles.map(a => `<li class="${a.vis === "interne" ? "int" : ""}"><b>${a.id}</b><span title="${esc(a.titre)}">${esc(a.titre)}</span>${a.vis === "interne" ? '<em class="tag int">interne</em>' : ""}</li>`).join("") + `</ul>`;
+  } else if (d.kind === "article"){
+    ph = "data/kb/KB-015.md, puis l'objet Document produit par lire_article.";
+    h = `<div class="dbox"><h3>Le fichier</h3><pre class="raw"><span class="hd">${esc(KB015_RAW)}</span>\n\n${esc(KB015_BODY)}</pre></div>
+         <div class="arrow">↓ lire_article</div>
+         <div class="dbox hit"><h3>Document</h3>${kv([["page_content", "« # Quota du serveur de fichiers atteint … »"], ...META015.map(([k,v]) => ["metadata." + k, v])])}</div>`;
+  } else if (d.kind === "chunks"){
+    ph = "Les 2 morceaux de KB-015, tels qu'ils seront indexés.";
+    h = [["Symptôme",0],["Procédure",1]].map(([sec, m]) => `<div class="dbox"><h3>morceau ${m} · section « ${sec} »</h3><pre class="raw">${esc(D.chunks["KB-015|" + sec])}</pre><p class="dnote">metadata : les 6 champs de l'en-tête + <code>section="${sec}"</code>, <code>morceau=${m}</code></p></div>`).join("")
+      + `<p class="dnote">20 articles → 37 morceaux (1 à 3 par article). La première ligne est le titre ajouté par <code>decouper</code>.</p>`;
+  } else if (d.kind === "dense"){
+    ph = "Le vecteur dense du morceau KB-015 · Symptôme.";
+    h = `<div class="dbox hit"><h3>embed_documents → 384 nombres</h3><div class="bars" aria-hidden="true">${bars()}</div>
+         <p class="dnote mono">[${DENSE_HEAD.map(v => fr(v,3)).join("; ")} ; … 378 autres]</p></div>
+         <p class="dnote">Les 6 premières valeurs sont les vraies. Les barres suivantes illustrent la forme du vecteur, pas ses valeurs. Mean pooling, 384 dimensions (configuration du modèle).</p>`;
+  } else if (d.kind === "sparse"){
+    ph = "Le vecteur creux du morceau KB-015 · Symptôme.";
+    h = `<div class="dbox hit"><h3>13 racines distinctes → 13 couples (indice, poids)</h3><div class="tblwrap"><table class="tbl"><thead><tr><th>racine</th><th>indice (mmh3)</th><th>poids</th></tr></thead><tbody>`
+      + SPARSE_DOC.map(([t,i,w]) => `<tr class="${["srv","fichi","03"].includes(t) ? "mk" : ""}"><td>${t}</td><td>${i}</td><td>${fr(w,2)}</td></tr>`).join("")
+      + `</tbody></table></div></div><p class="dnote">« quot » et « atteint » (2 fois), « serveur » et « fichi » (3 fois) pèsent plus que les racines vues une fois : le titre est présent deux fois dans ce premier morceau. Le poids suit la formule BM25 (k = 1,2, b = 0,75). Toutes les autres racines du vocabulaire valent 0 : d'où « creux ».</p>`;
+  } else if (d.kind === "collection"){
+    ph = "La configuration de la collection kb_nordtech.";
+    h = `<div class="dbox hit"><h3>vecteur dense (sans nom)</h3>${kv([["size","384"],["distance","Cosine"]])}</div>
+         <div class="dbox hit"><h3>vecteur creux « langchain-sparse »</h3>${kv([["modifier","Modifier.IDF","chg"]])}</div>
+         <div class="dbox"><h3>index de payload (KEYWORD)</h3>${kv([["metadata.categorie",""],["metadata.visibilite",""],["metadata.equipe",""],["metadata.id",""]])}</div>`;
+  } else if (d.kind === "point"){
+    ph = "Un point de la collection : le morceau KB-015 · Symptôme.";
+    h = `<div class="dbox hit"><h3>point</h3><pre class="raw">{
+  "id": "ecf59afc-c30a-5c9a-b3cb-007e2922b9d1",
+  "vector": {
+    "": [0.031, -0.095, -0.032, …],           <span class="hd">← 384 nombres</span>
+    "langchain-sparse": {
+      "indices": [1273790862, 1084072007, …],  <span class="hd">← 13 racines</span>
+      "values":  [1.859, 1.96, …]
+    }
+  },
+  "payload": {
+    "page_content": "Quota du serveur de fichiers atteint\\n# Quota …",
+    "metadata": { "id": "KB-015", "categorie": "materiel",
+                  "visibilite": "public", "section": "Symptôme",
+                  "morceau": 0, … }
+  }
+}</pre></div><p class="dnote">L'identifiant vaut <code>uuid5(ESPACE_IDS, "KB-015#0#Symptôme")</code> : toujours le même pour ce morceau.</p>`;
+  } else if (d.kind === "question"){
+    ph = "L'appel fait par l'outil rechercher_procedures.";
+    h = `<div class="qcard">« ${esc(q.text)} »</div>${kv([["k","3 articles voulus"],["k * 3","9 morceaux demandés","chg"],["mode", "\"" + c.mode + "\"" + (c.mode === "hybrid" ? " (défaut)" : "")],["public_seulement", c.filt ? "True (défaut)" : "False", c.filt ? "" : "chg"]])}`;
+  } else if (d.kind === "qvec"){
+    ph = "La question, encodée par les deux modèles.";
+    h = `<div class="qcard">« ${esc(q.text)} »</div>
+         <div class="dbox"><h3>vecteur dense · embed_query</h3><p class="dnote mono">[${q.head.map(v => fr(v,3)).join("; ")} ; … 380 autres]</p></div>
+         <div class="dbox"><h3>vecteur creux · query_embed</h3><div class="tblwrap"><table class="tbl"><thead><tr><th>racine</th><th>indice</th><th>poids</th></tr></thead><tbody>`
+      + q.tokens.map((t,i) => `<tr class="${c.q === 0 && ["srv","fichi","03"].includes(t) ? "mk" : c.q === 1 ? "none" : ""}"><td>${esc(t)}</td><td>${q.idx[i]}</td><td>1</td></tr>`).join("")
+      + `</tbody></table></div>${c.q === 1 ? '<p class="dnote">Aucun de ces indices n\'existe dans la collection.</p>' : ""}</div>`;
+  } else if (d.kind === "filter"){
+    ph = c.filt ? "Le filtre passé à Qdrant." : "Aucun filtre : filter=None.";
+    const internes = [["KB-018","Lecture d'une alerte"],["KB-018","Escalade"],["KB-019","Réservé au N2"]];
+    h = c.filt
+      ? `<div class="dbox hit"><h3>models.Filter</h3><pre class="raw">Filter(must=[
+  FieldCondition(key="metadata.visibilite",
+                 match=MatchValue(value="public"))
+])</pre></div>`
+      : `<div class="dbox warn"><h3>filtre(public_seulement=False)</h3><pre class="raw">None   <span class="hd">← aucune condition</span></pre></div>`;
+    h += `<div class="dbox"><h3>les 3 morceaux internes</h3><ul class="arts">` + internes.map(([id,sec]) => `<li class="int"><b class="${c.filt ? "excl" : ""}">${id}</b><span class="${c.filt ? "excl" : ""}">${esc(sec)}</span><em class="tag ${c.filt ? "pub" : "int"}">${c.filt ? "exclu" : "candidat"}</em></li>`).join("") + `</ul></div>`
+      + `<p class="dnote">${c.filt ? "34 points candidats sur 37." : "37 points candidats sur 37."} Les index de payload rendent ce filtre rapide, même sur une grosse collection.</p>`;
+  } else if (d.kind === "query"){
+    ph = "La requête que langchain_qdrant envoie à Qdrant, en un seul appel.";
+    const p = d.part, mk = (part, txt) => p === part ? `<span class="mk">${txt}</span>` : txt;
+    const f = c.filt ? "Filter(visibilite = public)" : "None";
+    h = `<div class="dbox hit"><h3>client.query_points(…)</h3><pre class="raw">query_points(
+  collection_name="kb_nordtech",
+  prefetch=[
+    ${mk("dense", `Prefetch(using="",  query=[384 nombres],\n             filter=${f}, limit=9)`)},
+    ${mk("sparse", `Prefetch(using="langchain-sparse",\n             query=SparseVector(${q.tokens.length} racines),\n             filter=${f}, limit=9)`)},
+  ],
+  ${mk("rrf", "query=FusionQuery(fusion=Fusion.RRF)")},
+  query_filter=${f}, limit=9, with_payload=True)</pre></div>`
+      + (p === "rrf" ? `<p class="dnote">Constante de la formule : k = 2 par défaut (<code>qdrant_client/hybrid/fusion.py</code>, constante <code>DEFAULT_RANKING_CONSTANT_K</code>). Score = Σ 1 / (position + 2), position comptée à partir de 0.</p>` : "");
+  } else if (d.kind === "modes"){
+    ph = "Ce que chaque mode envoie à Qdrant.";
+    const rows = [["dense", "query=[384 nombres], using=\"\""],["sparse", "query=SparseVector, using=\"langchain-sparse\""],["hybrid", "prefetch=[dense, BM25], query=Fusion.RRF"]];
+    h = `<div class="tblwrap"><table class="tbl"><thead><tr><th>mode</th><th>requête query_points</th><th>top 3 articles</th></tr></thead><tbody>`
+      + rows.map(([m, r]) => { const t = topk(c.q, m, c.filt); return `<tr class="${m === c.mode ? "mk" : ""}"><td>${m}</td><td>${esc(r)}</td><td>${t.kept.length ? t.kept.map(i => t.L[i][0]).join(", ") : "(vide)"}</td></tr>`; }).join("")
+      + `</tbody></table></div><p class="dnote">Le magasin de chaque mode est un <code>QdrantVectorStore</code> distinct, mis en cache par <code>magasin(mode)</code>. La collection est la même.</p>`;
+  } else if (d.kind === "topk"){
+    ph = "Les Documents renvoyés par kb.rechercher.";
+    const t = topk(c.q, c.mode, c.filt);
+    h = t.kept.length ? t.kept.map((i, n) => { const r = t.L[i], a = ART[r[0]], bad = a.vis === "interne", tg = r[0] === TARGET[c.q];
+        return `<div class="dbox ${bad ? "warn" : tg ? "hit" : ""}"><h3>docs[${n}] · ${r[0]}</h3>${kv([["titre", a.titre],["section", r[1]],["visibilite", a.vis, bad ? "chg" : ""]])}</div>`; }).join("")
+      : `<div class="dbox warn"><h3>docs</h3><pre class="raw">[]</pre></div>`;
+  } else if (d.kind === "prompt"){
+    ph = "Ce que le modèle reçoit, dans l'ordre de la conversation.";
+    h = `<div class="dbox"><h3>system · consigne du spécialiste</h3><p class="dnote" style="color:var(--fg)">Tu es le spécialiste Procédures du help-desk NordTech. Utilise rechercher_procedures, puis réponds en 3 phrases maximum EN CITANT les références [KB-xxx] utilisées. Si aucun extrait ne répond, dis-le : n'invente rien.</p></div>
+         <div class="dbox hit"><h3>tool · résultat de rechercher_procedures</h3><pre class="raw">${esc(formater(c.q, c.mode, c.filt))}</pre></div>
+         <p class="dnote">Entre les deux, la conversation contient la consigne reçue du coordinateur (message human) et l'appel d'outil du modèle (message ai).</p>`;
+  } else if (d.kind === "answer"){
+    ph = "La réponse du spécialiste, et ses sources.";
+    const v = verdict(c.q, c.mode, c.filt);
+    h = `<span class="verdict ${v.cls}">${v.tag}</span><div class="dbox ${v.cls === "good" ? "hit" : v.cls === "bad" ? "warn" : ""}"><h3>ai · réponse type (rédigée pour l'animation)</h3><p class="ans">${v.ans}</p></div>
+         <p class="dnote">Question : « ${esc(q.text)} » · mode ${MODE_FR[c.mode]} · ${c.filt ? "filtre public" : "sans filtre"}.</p>`;
+  }
+  $("dataPh").textContent = ph;
+  $("data").innerHTML = `<div class="${fresh ? "fresh" : ""}">${h}</div>`;
+}
+
+function renderRank(s, freshCols){
+  const c = ctx, q = c.q;
+  $("rcols").innerHTML = MODES.map(([m, name, unit, dec]) => {
+    const sel = s.selMode === m, fade = s.selMode && !sel;
+    let body;
+    if (!s.cols[m]) body = `<div class="wait">pas encore calculé</div>`;
+    else {
+      const t = topk(q, m, c.filt), L = t.L;
+      if (!L.length) body = `<div class="empty">Liste vide : aucune racine commune avec la KB.</div>`;
+      else body = `<ol class="rlist">` + L.map((r, i) => {
+        const a = ART[r[0]], bad = a.vis === "interne", tg = r[0] === TARGET[q] && !bad;
+        let cls = bad ? "bad" : tg ? "tg" : "", badge = bad ? '<span class="badge int">interne</span>' : "";
+        if (s.showTop && sel){
+          if (t.kept.includes(i)){ cls += " kept"; badge += '<span class="badge keep">gardé</span>'; }
+          else if (t.dup.includes(i)) cls += " dup";
+          else cls += " out";
+          if (t.tieWith === i || (t.tieWith != null && t.kept[2] === i)) badge += '<span class="badge eq">ex æquo</span>';
+        }
+        let why = "";
+        if (m === "hybrid"){
+          const p = rrfParts(q, c.filt, r);
+          why = `<span class="why">dense ${p.d >= 0 ? ord(p.d + 1) + " → 1/" + (p.d + 2) : "absent"} · BM25 ${p.b >= 0 ? ord(p.b + 1) + " → 1/" + (p.b + 2) : "absent"}</span>`;
+        }
+        return `<li class="${cls}"><span class="rk">${i + 1}</span><span class="nm"><b>${r[0]}</b> ${esc(r[1])}${badge}</span><span class="sc">${fr(r[2], dec)}</span>${why}</li>`;
+      }).join("") + `</ol>`;
+    }
+    return `<div class="rcol${sel ? " sel" : ""}${fade ? " fade" : ""}${freshCols.includes(m) ? " fresh" : ""}"><h3>${name}</h3><p class="rsub">${unit}${m === "hybrid" ? " · Σ 1/(position + 2)" : ""}</p>${body}</div>`;
+  }).join("");
+}
+
+function renderCode(s){
+  document.querySelectorAll("pre.code .ln").forEach(l => {
+    const id = l.dataset.l; l.className = "ln";
+    if (s.code.includes(id)) l.classList.add(s.codeCls);
+  });
+  $("note").innerHTML = s.note ? `<div class="note ${s.note.cls}">${s.note.h}</div>` : "";
+}
+
+function renderTerm(s, freshFrom){
+  const pill = $("pill");
+  pill.className = "pill" + (s.pill === "run" ? " run" : "");
+  pill.textContent = s.pill === "run" ? "actif" : s.pill === "dead" ? "terminé" : "pas lancé";
+  let h = s.term.map((l, i) => `<div class="${l.c || ""}${i >= freshFrom ? " fresh" : ""}">${esc(l.x)}</div>`).join("");
+  if (s.inv) h += `<div class="spin">   indexation en cours</div>`;
+  if (!s.term.length) h = `<div class="sys">Rien n'est lancé pour l'instant.</div>`;
+  const tb = $("tb"); tb.innerHTML = h; tb.scrollTop = tb.scrollHeight;
+}
+
+function render(){
+  const s = build(idx);
+  const forward = idx === prevIdx + 1;
+  const pm = forward ? prevModel : null;
+  const freshCols = pm ? MODES.map(m => m[0]).filter(m => s.cols[m] && !pm.cols[m]) : [];
+
+  $("stepno").textContent = `Étape ${idx} / ${N}`;
+  const chip = $("phasechip"); chip.className = "phase-chip " + PHASE[idx]; chip.textContent = PH[PHASE[idx]];
+  $("captitle").textContent = s.title;
+  $("captext").innerHTML = s.text;
+  $("choices").hidden = !s.choices;
+  $("gMode").hidden = !s.modeChoice;
+  document.querySelectorAll("#qBtns button").forEach(b => b.setAttribute("aria-pressed", String(+b.dataset.q === ctx.q)));
+  $("fOn").setAttribute("aria-pressed", String(ctx.filt));
+  $("fOff").setAttribute("aria-pressed", String(!ctx.filt));
+  document.querySelectorAll("#gMode button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.m === ctx.mode)));
+
+  $("marker").style.left = `calc(${MARK[idx]}% - 1.5px)`;
+  $("seg1").classList.toggle("dim", PHASE[idx] !== "p1" && PHASE[idx] !== "p0");
+  $("seg2").classList.toggle("dim", PHASE[idx] !== "pq");
+  $("seg3").classList.toggle("dim", PHASE[idx] !== "p2");
+  $("pts").textContent = s.points;
+  $("ptsSub").textContent = s.pointsSub;
+
+  renderGraph(s);
+  renderData(s, !!pm);
+  renderRank(s, freshCols);
+  renderCode(s);
+  renderTerm(s, pm ? pm.term.length : 1e9);
+
+  $("bPrev").disabled = idx === 0;
+  $("bNext").disabled = idx === N;
+  $("bPlay").disabled = idx === N;
+  seen.add(idx);
+  $("dots").querySelectorAll(".dot").forEach((d, i) => {
+    d.classList.toggle("cur", i === idx);
+    d.classList.toggle("seen", seen.has(i));
+  });
+  if (idx === N && playing) stop();
+  prevModel = s; prevIdx = idx;
+}
+
+/* ---------- commandes ---------- */
+const DUR = i => i === 0 ? 5000 : (i === 12 || i === 13 || i === 14) ? 9000 : (i === 10 || i === 11 || i === 16) ? 8000 : 6500;
+function go(i){ idx = Math.max(0, Math.min(N, i)); render(); if (playing) schedule(); }
+function schedule(){ clearTimeout(timer); timer = setTimeout(() => { if (idx < N) { idx++; render(); if (playing) schedule(); } }, DUR(idx)); }
+function play(){ if (idx === N) return; playing = true; $("bPlay").textContent = "❚❚ Pause"; schedule(); }
+function stop(){ playing = false; clearTimeout(timer); $("bPlay").textContent = "▶ Lecture"; }
+
+$("qBtns").innerHTML = Q.map((x, i) => `<button type="button" data-q="${i}" aria-pressed="${i === 0}"><small>${QLABEL[i]}</small>« ${esc(x.text)} »</button>`).join("");
+$("dots").innerHTML = PHASE.map((p, i) => `<button class="dot ${p}" aria-label="Aller à l'étape ${i}" data-i="${i}"></button>`).join("");
+$("dots").addEventListener("click", e => { const b = e.target.closest(".dot"); if (b){ stop(); prevIdx = -2; go(+b.dataset.i); } });
+$("bNext").onclick = () => { stop(); go(idx + 1); };
+$("bPrev").onclick = () => { stop(); prevIdx = -2; go(idx - 1); };
+$("bPlay").onclick = () => playing ? stop() : play();
+$("bReset").onclick = () => { stop(); ctx.q = 0; ctx.mode = "hybrid"; ctx.filt = true; seen.clear(); prevIdx = -2; go(0); };
+const rerender = () => { prevIdx = -2; render(); };
+$("qBtns").addEventListener("click", e => { const b = e.target.closest("button"); if (b){ ctx.q = +b.dataset.q; rerender(); } });
+$("fOn").onclick = () => { ctx.filt = true; rerender(); };
+$("fOff").onclick = () => { ctx.filt = false; rerender(); };
+$("gMode").addEventListener("click", e => { const b = e.target.closest("button"); if (b){ ctx.mode = b.dataset.m; rerender(); } });
+document.addEventListener("keydown", e => {
+  if (e.target.matches("input,textarea")) return;
+  if (e.key === "ArrowRight" && idx < N){ e.preventDefault(); stop(); go(idx + 1); }
+  else if (e.key === "ArrowLeft" && idx > 0){ e.preventDefault(); stop(); prevIdx = -2; go(idx - 1); }
+  else if (e.key === " " && !e.target.matches("button")){ e.preventDefault(); playing ? stop() : play(); }
+});
+
+render();
+})();
+</script>
+</body>
+</html>

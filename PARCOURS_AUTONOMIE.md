@@ -39,7 +39,18 @@ service extérieur.
 
 Les points 1 à 6 rendent tout le reste lisible : ne les sautez pas.
 
-Pour le point 3, commencez par l'animation `comprendre/interrupt_reprise.html` : elle montre pas à pas la pause, le checkpoint retrouvé par le `thread_id` et la reprise par une autre personne.
+Avant chaque point, ouvrez l'animation du dossier `comprendre/` (double-clic, dans le navigateur) : elle montre le mécanisme pas à pas, sur le code du fil rouge.
+
+| Point | Animation |
+|---|---|
+| avant 1 | `boucle_react.html` (la boucle ReAct, J1-02) |
+| 1 | `stategraph_reducers.html` |
+| 2 | `persistance_time_travel.html` |
+| 3 | `interrupt_reprise.html` |
+| 5 | `robustesse_retry_timeout.html` |
+| 6 | `rag_hybride.html` et `coordinateur_specialistes.html` |
+| 7, 8 | `coordinateur_specialistes.html` (handoff), `mcp_client_serveur.html` |
+| 12 (Send) | `send_map_reduce.html` |
 
 ## 2. Aller plus loin : ce qu'on n'a pas fait ensemble
 
