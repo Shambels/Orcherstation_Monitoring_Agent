@@ -122,32 +122,36 @@ with st.sidebar:
 
 
 # =============================================================================== exécuter un graphe, nœud par nœud
-def derouler(entree, thread_id, zone_graphe, zone_journal) -> tuple[str | None, list, list[str]]:
-    """Lance le graphe et anime le dessin pendant l'exécution. Renvoie (trace_id, pauses, journal)."""
+def derouler(entree, thread_id, zone_graphe, zone_journal) -> tuple[str | None, list, list[str], str]:
+    """Lance le graphe et anime le dessin pendant l'exécution. Renvoie (trace_id, pauses, journal, dessin final)."""
     file = queue.Queue()
     M.lancer(entree, thread_id, file, pannes=pannes)
     faits, journal, pauses = set(), [], []
-    zone_graphe.graphviz_chart(dot(M.graphe, courant="__start__"))
+    dessin = dot(M.graphe, courant="__start__")
+    zone_graphe.graphviz_chart(dessin)
     with st.spinner("Le graphe s'exécute…"):
         while True:
             e = file.get()
             if e.type == "noeud":
                 faits.add(e.noeud)
                 journal.append(raconter(e.noeud, e.valeur))
-                zone_graphe.graphviz_chart(dot(M.graphe, faits=faits, courant=e.noeud))
+                dessin = dot(M.graphe, faits=faits, courant=e.noeud)
+                zone_graphe.graphviz_chart(dessin)
             elif e.type == "pause":
                 pauses = e.valeur
                 journal.append(f"⏸ **valider** : {pauses[0].get('question', 'en attente')} "
                                "Le graphe est arrêté, son état est dans le checkpoint.")
-                zone_graphe.graphviz_chart(dot(M.graphe, faits=faits, courant="valider", pause=True))
+                dessin = dot(M.graphe, faits=faits, courant="valider", pause=True)
+                zone_graphe.graphviz_chart(dessin)
             elif e.type == "erreur":
                 zone_journal.error(f"{type(e.valeur).__name__} : {e.valeur}")
-                return None, [], journal
+                return None, [], journal, dessin
             else:
                 if not pauses:
-                    zone_graphe.graphviz_chart(dot(M.graphe, faits=faits | {"__end__"}))
+                    dessin = dot(M.graphe, faits=faits | {"__end__"})
+                    zone_graphe.graphviz_chart(dessin)
                 zone_journal.markdown("\n\n".join(journal))
-                return e.valeur, pauses, journal
+                return e.valeur, pauses, journal, dessin
             zone_journal.markdown("\n\n".join(journal))
 
 
@@ -246,10 +250,18 @@ with onglets["💬 Agent N1"]:
                 with st.chat_message("user"):
                     st.markdown(h["ticket"])
                 with st.chat_message("assistant", avatar="🎧"):
-                    st.markdown("\n\n".join(h["journal"]))
+                    if h.get("graphe"):                 # le parcours de CE ticket, gardé après le st.rerun()
+                        gauche, droite = st.columns([2, 3])
+                        gauche.graphviz_chart(h["graphe"])
+                        droite.markdown("\n\n".join(h["journal"]))
+                    else:
+                        st.markdown("\n\n".join(h["journal"]))
         else:
             bandeau_decision(etat["valeurs"])
             afficher_messages(etat["valeurs"].get("messages", []))
+            if st.session_state.get(f"graphe_{M.chemin.name}"):
+                with st.expander("🗺️ Le parcours du dernier tour", expanded=True):
+                    st.graphviz_chart(st.session_state[f"graphe_{M.chemin.name}"])
             if st.session_state.get("scores") and M.b["securite"]:
                 s = st.session_state.scores
                 st.caption("⭐ scores posés par le code : " + " · ".join(f"{k} = {v}" for k, v in s.items()))
@@ -268,10 +280,13 @@ with onglets["💬 Agent N1"]:
                 st.markdown(ticket)
             gauche, droite = st.columns([2, 3])
             zone_graphe, zone_journal = gauche.empty(), droite.empty()
-            trace_id, _, journal = derouler({"ticket": ticket}, thread, zone_graphe, zone_journal)
+            trace_id, _, journal, dessin = derouler({"ticket": ticket}, thread, zone_graphe, zone_journal)
             apres_execution(trace_id, ticket)
             if not M.b["memoire"]:
-                st.session_state[f"historique_{M.chemin.name}"].append({"ticket": ticket, "journal": journal})
+                st.session_state[f"historique_{M.chemin.name}"].append(
+                    {"ticket": ticket, "journal": journal, "graphe": dessin})
+            else:
+                st.session_state[f"graphe_{M.chemin.name}"] = dessin
             st.rerun()
 
 # ----------------------------------------------------------------------------- le superviseur

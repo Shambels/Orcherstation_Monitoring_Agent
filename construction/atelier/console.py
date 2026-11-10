@@ -348,7 +348,7 @@ if "📊 Évaluation" in onglets:
     with onglets["📊 Évaluation"]:
         st.markdown("### L'experiment sur le dataset versionné (20 cas)")
         st.caption("Rejoue le garde-fou et le tri de CE fichier sur data/eval/helpdesk_eval.json, puis publie le run "
-                   "dans Langfuse › Datasets › helpdesk-ops-eval › Runs. Long sans GPU.")
+                   "dans Langfuse › Datasets › helpdesk-ops-eval › Experiments. Long sans GPU.")
         if st.button("▶ Lancer l'experiment"):
             sortie = st.empty()
             lignes = []
